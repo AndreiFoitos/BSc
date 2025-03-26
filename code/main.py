@@ -28,8 +28,9 @@ print("Model initialized.")
 
 # Train Model
 print("Training model...")
-history = model.train(train_data, valid_data, epochs=20, train_steps=128, valid_steps=32)
+history = model.train(train_data, valid_data, epochs=2, train_steps=12, valid_steps=32)
 
 # Save Model
-model.save("age_estimation_model.h5")
-print("Model training complete and saved as age_estimation_model.h5")
+model.save("age_estimation_model.keras")
+
+print("Model training complete and saved as age_estimation_model.keras")
