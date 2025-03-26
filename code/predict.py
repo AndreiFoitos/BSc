@@ -14,7 +14,7 @@ def load_model(model_path="age_estimation_model.keras"):
 def predict_age(model, img_path):
     img = tf.keras.preprocessing.image.load_img(img_path, target_size=(224, 224))
     img_array = tf.keras.preprocessing.image.img_to_array(img) / 255.0
-    img_array = np.expand_dims(img_array, axis=0)  # Convert to batch format
+    img_array = np.expand_dims(img_array, axis=0)
     
     predicted_age = model.predict(img_array)[0][0]
     return predicted_age
@@ -22,7 +22,7 @@ def predict_age(model, img_path):
 def load_ground_truth(csv_path):
     """ Load ground truth ages from CSV file """
     df = pd.read_csv(csv_path)
-    return dict(zip(df['file_name'], df['apparent_age_avg']))  # Ensure correct column names
+    return dict(zip(df['file_name'], df['apparent_age_avg']))
 
 def predict_and_compare(model, folder_path, csv_path):
     ground_truth = load_ground_truth(csv_path)
@@ -46,18 +46,16 @@ def predict_and_compare(model, folder_path, csv_path):
         actual_ages.append(actual_age)
         predicted_ages.append(predicted_age)
 
-        # Print only the first 10 predictions
+        
         if i < 10:
             print(f"{filename}: Predicted Age = {predicted_age:.2f}, Apparent Age Avg = {actual_age}, Error = {error:.2f}")
     
-    # Calculate MAE and MSE
     mae = np.mean(errors)
     mse = np.mean(np.array(errors) ** 2)
 
     print(f"\nMean Absolute Error (MAE): {mae:.2f}")
     print(f"Mean Squared Error (MSE): {mse:.2f}")
 
-    # Plot results
     plot_results(actual_ages, predicted_ages)
 
 def plot_results(actual_ages, predicted_ages):

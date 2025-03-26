@@ -27,22 +27,20 @@ class AgePredictionDataLoader:
     def _load_labels(self):
         df = pd.read_csv(self.labels_csv)
 
-        # Keep original filenames from CSV (without "_face")
         labels_dict = dict(zip(df["file_name"], df["apparent_age_avg"]))
         return labels_dict
 
     def _custom_generator(self):
-        num_loaded = 0  # Debugging counter
-        image_files = os.listdir(self.data_dir)  # List all files in directory
+        num_loaded = 0
+        image_files = os.listdir(self.data_dir)
 
         for img_name in image_files:
-            if img_name.endswith("_face.jpg"):  # ✅ Only process _face images
+            if img_name.endswith("_face.jpg"):
                 csv_name = img_name.replace(".jpg_face.jpg", ".jpg")
 
                 if csv_name in self.labels:
                     img_path = os.path.join(self.data_dir, img_name)
 
-                    # Debug: Confirm if image exists
                     if not os.path.exists(img_path):
                         continue
 
@@ -50,17 +48,17 @@ class AgePredictionDataLoader:
                         img = tf.keras.preprocessing.image.load_img(img_path, target_size=self.target_size)
                         img_array = tf.keras.preprocessing.image.img_to_array(img)
                         img_array = self.datagen.random_transform(img_array)
-                        img_array = img_array / 255.0  # Normalize
-                        label = self.labels[csv_name]  # ✅ Match label using original CSV name
+                        img_array = img_array / 255.0
+                        label = self.labels[csv_name]
 
                         num_loaded += 1
                         if num_loaded % 10 == 0:
-                            pass  # Removed the debug print statement
+                            pass  #
 
                         yield img_array, label
 
                     except Exception as e:
-                        pass  # Removed the error print statement
+                        pass
 
     def get_dataset(self):
         dataset = tf.data.Dataset.from_generator(
