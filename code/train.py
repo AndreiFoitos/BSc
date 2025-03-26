@@ -21,10 +21,11 @@ print("Dataset loaded.")
 model = AgeEstimationModel()
 print("Model initialized.")
 
-history = model.train(train_data, valid_data, epochs=20, train_steps=130, valid_steps=50)
+history = model.train(train_data, valid_data, epochs=2, train_steps=10, valid_steps=50)
 
 model.save("age_estimation_model.keras")
 print("Model training complete and saved as age_estimation_model.keras")
+
 
 def plot_learning_curves(history):
     plt.figure(figsize=(12, 5))

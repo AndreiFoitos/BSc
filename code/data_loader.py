@@ -26,9 +26,10 @@ class AgePredictionDataLoader:
 
     def _load_labels(self):
         df = pd.read_csv(self.labels_csv)
-
-        labels_dict = dict(zip(df["file_name"], df["apparent_age_avg"]))
+        labels_dict = {row["file_name"]: (row["apparent_age_avg"], row["apparent_age_std"]) for _, row in df.iterrows()}
+        
         return labels_dict
+
 
     def _custom_generator(self):
         num_loaded = 0
@@ -49,24 +50,25 @@ class AgePredictionDataLoader:
                         img_array = tf.keras.preprocessing.image.img_to_array(img)
                         img_array = self.datagen.random_transform(img_array)
                         img_array = img_array / 255.0
-                        label = self.labels[csv_name]
+                        label_avg, label_std = self.labels[csv_name]  
 
-                        num_loaded += 1
-                        if num_loaded % 10 == 0:
-                            pass  #
-
-                        yield img_array, label
+                        yield img_array, (label_avg, label_std)
 
                     except Exception as e:
                         pass
+
 
     def get_dataset(self):
         dataset = tf.data.Dataset.from_generator(
             self._custom_generator,
             output_signature=(
                 tf.TensorSpec(shape=(self.target_size[0], self.target_size[1], 3), dtype=tf.float32),
-                tf.TensorSpec(shape=(), dtype=tf.float32)
+                (
+                    tf.TensorSpec(shape=(), dtype=tf.float32),  # apparent_age_avg
+                    tf.TensorSpec(shape=(), dtype=tf.float32)   # apparent_age_std
+                )
             )
         ).batch(self.batch_size)
 
         return dataset
+

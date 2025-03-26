@@ -18,14 +18,32 @@ class AgeEstimationModel(tf.keras.Model):
         self.global_avg_pool = GlobalAveragePooling2D()
         self.dense1 = Dense(512, activation='relu')
         self.dropout = Dropout(dropout_rate)
-        self.output_layer = Dense(1, activation='linear')
+
+        # Two separate output layers
+        self.age_avg_output = Dense(1, activation='linear', name='apparent_age_avg')
+        self.age_std_output = Dense(1, activation='linear', name='apparent_age_std')
 
     def call(self, inputs):
         x = self.base_model(inputs, training=False)
         x = self.global_avg_pool(x)
         x = self.dense1(x)
         x = self.dropout(x)
-        return self.output_layer(x)
+
+        return {
+            'apparent_age_avg': self.age_avg_output(x),
+            'apparent_age_std': self.age_std_output(x)
+        }
+
+    def train(self, train_data, valid_data, epochs=20, train_steps=1000, valid_steps=200):
+        self.compile(
+            optimizer='adam',
+            loss={'apparent_age_avg': 'mse', 'apparent_age_std': 'mse'},  # Only using MSE
+            metrics={}  # No MAE
+        )
+        history = self.fit(train_data, validation_data=valid_data, epochs=epochs,
+                           steps_per_epoch=train_steps, validation_steps=valid_steps)
+        return history
+
 
     def get_config(self):
         config = super(AgeEstimationModel, self).get_config()
@@ -38,16 +56,3 @@ class AgeEstimationModel(tf.keras.Model):
     @classmethod
     def from_config(cls, config):
         return cls(input_shape=config['input_shape'], dropout_rate=config['dropout_rate'], name=config['name'])
-
-
-    def train(self, train_data, valid_data, epochs=20, train_steps=1000, valid_steps=200):
-        self.compile(optimizer='adam', loss='mse', metrics=['mae'])
-        history = self.fit(train_data, validation_data=valid_data, epochs=epochs,
-                           steps_per_epoch=train_steps, validation_steps=valid_steps)
-        return history
-
-    def predict_age(self, img_path):
-        img = tf.keras.preprocessing.image.load_img(img_path, target_size=(224, 224))
-        img_array = tf.keras.preprocessing.image.img_to_array(img) / 255.0
-        img_array = tf.expand_dims(img_array, axis=0)
-        return self.predict(img_array)[0][0]
