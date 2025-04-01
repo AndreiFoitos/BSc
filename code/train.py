@@ -1,6 +1,7 @@
-import tensorflow as tf
 import matplotlib.pyplot as plt
-from model import AgeEstimationModel
+import tensorflow as tf
+from tensorflow.keras.callbacks import EarlyStopping
+from model import UncertaintyAgeEstimationModel
 from data_loader import AgePredictionDataLoader
 import os
 
@@ -16,48 +17,39 @@ valid_loader = AgePredictionDataLoader(VALID_DIR, VALID_CSV, batch_size=32)
 train_data = train_loader.get_dataset().repeat()
 valid_data = valid_loader.get_dataset().repeat()
 
-print("Dataset loaded.")
-
-model = AgeEstimationModel()
-print("Model initialized.")
-
-history = model.train(train_data, valid_data, epochs=2, train_steps=10, valid_steps=50)
-
-model.save("age_estimation_model.keras")
-print("Model training complete and saved as age_estimation_model.keras")
-
-
-def plot_learning_curves(history):
-    plt.figure(figsize=(12, 5))
+def build_model():
+    learning_rate = 1e-4  # Set a fixed learning rate
+    dropout_rate = 0.5  # Set a fixed dropout rate
     
+    model = UncertaintyAgeEstimationModel(dropout_rate=dropout_rate)
     
-    plt.subplot(1, 2, 1)
-    plt.plot(history['loss'], label='Train Loss')
-    plt.plot(history['val_loss'], label='Validation Loss')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.title('Loss Curve')
-    plt.legend()
-    
-    
-    plt.subplot(1, 2, 2)
-    plt.plot(history['mae'], label='Train MAE')
-    plt.plot(history['val_mae'], label='Validation MAE')
-    plt.xlabel('Epochs')
-    plt.ylabel('MAE')
-    plt.title('Mean Absolute Error (MAE)')
-    plt.legend()
-    
-    plt.show()
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4), loss=model.custom_loss)
+
+    return model
+
+early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
 
-if hasattr(history, 'history'):
-    history_dict = history.history
-    plot_learning_curves(history_dict)
-    
-    print("Final Training MAE:", history_dict['mae'][-1])
-    print("Final Validation MAE:", history_dict['val_mae'][-1])
-    print("Final Training MSE:", history_dict['mse'][-1])
-    print("Final Validation MSE:", history_dict['val_mse'][-1])
-else:
-    print("History object does not contain history dictionary.")
+# Train final model
+model = build_model()
+sample_input = tf.random.normal((1, 224, 224, 3))
+sample_output = model(sample_input)
+print(sample_output.shape)  # Should be (1,2)
+sample_img, sample_label = next(iter(train_loader.get_dataset()))
+print(sample_label.shape)  # Should print (batch_size, 2)
+
+history = model.fit(train_data, validation_data=valid_data, epochs=20, steps_per_epoch=128, validation_steps=50, callbacks=[early_stopping])
+
+model.save("uncertainty_age_estimation_model.keras")
+print("Model training complete and saved.")
+
+
+# Plot training history
+plt.figure(figsize=(8, 6))
+plt.plot(history.history['loss'], label='Training Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.title('Training and Validation Loss')
+plt.legend()
+plt.show()
