@@ -1,7 +1,6 @@
-import matplotlib.pyplot as plt
 import tensorflow as tf
-from tensorflow.keras.callbacks import EarlyStopping
-from model import UncertaintyAgeEstimationModel
+import matplotlib.pyplot as plt
+from model import AgeEstimationModel
 from data_loader import AgePredictionDataLoader
 import os
 
@@ -17,39 +16,41 @@ valid_loader = AgePredictionDataLoader(VALID_DIR, VALID_CSV, batch_size=32)
 train_data = train_loader.get_dataset().repeat()
 valid_data = valid_loader.get_dataset().repeat()
 
-def build_model():
-    learning_rate = 1e-4  # Set a fixed learning rate
-    dropout_rate = 0.5  # Set a fixed dropout rate
-    
-    model = UncertaintyAgeEstimationModel(dropout_rate=dropout_rate)
-    
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4), loss=model.custom_loss)
+print("Dataset loaded.")
 
-    return model
+model = AgeEstimationModel()
+print("Model initialized.")
 
-early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+history = model.train(train_data, valid_data, epochs=100, train_steps=130, valid_steps=50)
 
+# Fine-tune the model after initial training
+fine_tune_history = model.fine_tune(train_data, valid_data, epochs=10, train_steps=130, valid_steps=50)
 
-# Train final model
-model = build_model()
-sample_input = tf.random.normal((1, 224, 224, 3))
-sample_output = model(sample_input)
-print(sample_output.shape)  # Should be (1,2)
-sample_img, sample_label = next(iter(train_loader.get_dataset()))
-print(sample_label.shape)  # Should print (batch_size, 2)
+model.save("age_estimation_model.keras")
+print("Model training complete and saved as age_estimation_model.keras")
 
-history = model.fit(train_data, validation_data=valid_data, epochs=20, steps_per_epoch=128, validation_steps=50, callbacks=[early_stopping])
+def plot_learning_curves(history):
+    plt.figure(figsize=(10, 5))
 
-model.save("uncertainty_age_estimation_model.keras")
-print("Model training complete and saved.")
+    plt.plot(history['apparent_age_avg_loss'], label='Train Loss (Avg)')
+    plt.plot(history['val_apparent_age_avg_loss'], label='Validation Loss (Avg)')
+    plt.plot(history['apparent_age_std_loss'], label='Train Loss (Std)')
+    plt.plot(history['val_apparent_age_std_loss'], label='Validation Loss (Std)')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss (MSE)')
+    plt.title('Loss Curves (MSE)')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
 
+if hasattr(history, 'history'):
+    history_dict = history.history
+    plot_learning_curves(history_dict)
 
-# Plot training history
-plt.figure(figsize=(8, 6))
-plt.plot(history.history['loss'], label='Training Loss')
-plt.plot(history.history['val_loss'], label='Validation Loss')
-plt.xlabel('Epochs')
-plt.ylabel('Loss')
-plt.title('Training and Validation Loss')
-plt.legend()
-plt.show()
+    print("Final Train MSE (Avg):", history_dict['apparent_age_avg_loss'][-1])
+    print("Final Val MSE (Avg):", history_dict['val_apparent_age_avg_loss'][-1])
+    print("Final Train MSE (Std):", history_dict['apparent_age_std_loss'][-1])
+    print("Final Val MSE (Std):", history_dict['val_apparent_age_std_loss'][-1])
+else:
+    print("History object does not contain history dictionary.")

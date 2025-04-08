@@ -1,50 +1,139 @@
 import tensorflow as tf
-from tensorflow.keras import layers, Model
-import numpy as np
+from tensorflow.keras.applications import DenseNet121
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Dense, Dropout, GlobalAveragePooling2D, BatchNormalization, LeakyReLU
+from tensorflow.keras.callbacks import EarlyStopping
 
 @tf.keras.utils.register_keras_serializable()
-class UncertaintyAgeEstimationModel(Model):
-    def __init__(self, dropout_rate=0.5, **kwargs):
-        super(UncertaintyAgeEstimationModel, self).__init__(**kwargs)
-        self.base_model = tf.keras.applications.ResNet50(include_top=False, input_shape=(224, 224, 3), pooling="avg")
-        self.dropout = layers.Dropout(dropout_rate)
-        self.age_output = layers.Dense(1, name="age_pred")  # Age prediction
-        self.log_var_output = layers.Dense(1, name="log_var_pred")  # Log variance output
+class AgeEstimationModel(tf.keras.Model):
+    def __init__(self, input_shape=(224, 224, 3), dropout_rate=0.5, **kwargs):
+        super(AgeEstimationModel, self).__init__(**kwargs)
+        self.base_model = DenseNet121(weights='imagenet', include_top=False, input_shape=input_shape)
+        self.base_model.trainable = False  # Initially freeze all layers
+
+        self.global_avg_pool = GlobalAveragePooling2D()
+        
+        # First dense layer
+        self.dense1 = Dense(1024, activation=None)  # Larger number of neurons
+        self.batch_norm1 = BatchNormalization()
+        self.relu1 = LeakyReLU(alpha=0.1)  # Leaky ReLU for better training stability
+        
+        # Second dense layer
+        self.dense2 = Dense(512, activation=None)
+        self.batch_norm2 = BatchNormalization()
+        self.relu2 = LeakyReLU(alpha=0.1)
+
+        # Third dense layer
+        self.dense3 = Dense(256, activation=None)
+        self.batch_norm3 = BatchNormalization()
+        self.relu3 = LeakyReLU(alpha=0.1)
+
+        self.dropout = Dropout(dropout_rate)
+
+        # Output layers for age prediction
+        self.age_avg_output = Dense(1, activation='relu', name='apparent_age_avg')
+        self.age_std_output = Dense(1, activation='relu', name='apparent_age_std') 
 
     def call(self, inputs):
-        x = self.base_model(inputs, training=False)
+        x = self.base_model(inputs, training=True)
+        x = self.global_avg_pool(x)
+
+        # Pass through dense layers with batch normalization and activation functions
+        x = self.dense1(x)
+        x = self.batch_norm1(x)
+        x = self.relu1(x)
+
+        x = self.dense2(x)
+        x = self.batch_norm2(x)
+        x = self.relu2(x)
+
+        x = self.dense3(x)
+        x = self.batch_norm3(x)
+        x = self.relu3(x)
+
         x = self.dropout(x)
-        age_pred = self.age_output(x)
-        log_var_pred = self.log_var_output(x)  
-        return tf.concat([age_pred, log_var_pred], axis=1)  # Ensure 2D output
+
+        return {
+            "apparent_age_avg": self.age_avg_output(x),
+            "apparent_age_std": self.age_std_output(x)
+        }
+    
+    def train(self, train_data, valid_data, epochs=20, train_steps=1000, valid_steps=200):
+        self.compile(
+            optimizer='adam',
+            loss={  # MSE for both age avg and std
+                "apparent_age_avg": 'mse',
+                "apparent_age_std": 'mse'
+            }
+        )
+        
+        early_stopping = EarlyStopping(
+            monitor='val_loss',
+            patience=10,  # Lower patience for faster early stopping
+            min_delta=0.001,
+            restore_best_weights=True,
+            verbose=1
+        )
+
+        # Train the top layers initially
+        history = self.fit(
+            train_data,
+            validation_data=valid_data,
+            epochs=epochs,
+            steps_per_epoch=train_steps,
+            validation_steps=valid_steps,
+            callbacks=[early_stopping]
+        )
+        return history
+
+    def fine_tune(self, train_data, valid_data, epochs=5, train_steps=1000, valid_steps=200):
+        # Unfreeze the last N layers of the DenseNet base model for fine-tuning
+        layers_to_unfreeze = 40
+        for layer in self.base_model.layers[-layers_to_unfreeze:]:
+            layer.trainable = True
+        
+        # Re-compile with a smaller learning rate for fine-tuning
+        self.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
+            loss={
+                "apparent_age_avg": 'mse',
+                "apparent_age_std": 'mse'
+            }
+        )
+        
+        # Train the model with fine-tuning
+        early_stopping = EarlyStopping(
+            monitor='val_loss',
+            patience=10,
+            min_delta=0.001,
+            restore_best_weights=True,
+            verbose=1
+        )
+
+        fine_tune_history = self.fit(
+            train_data,
+            validation_data=valid_data,
+            epochs=epochs,
+            steps_per_epoch=train_steps,
+            validation_steps=valid_steps,
+            callbacks=[early_stopping]
+        )
+        return fine_tune_history
 
     def get_config(self):
-        config = super().get_config()
-        config.update({"dropout_rate": self.dropout.rate})
+        config = super(AgeEstimationModel, self).get_config()
+        config.update({
+            "input_shape": self.base_model.input_shape[1:],
+            "dropout_rate": self.dropout.rate
+        })
         return config
 
     @classmethod
     def from_config(cls, config):
-        return cls(**config)
+        return cls(input_shape=config['input_shape'], dropout_rate=config['dropout_rate'], name=config['name'])
 
-    @staticmethod
-    def custom_loss(y_true, y_pred):
-        y_true = tf.convert_to_tensor(y_true)
-        age_true, age_pred = y_true[:, 0], y_pred[:, 0]
-        log_var = y_pred[:, 1]  
-
-        mse = tf.square(age_true - age_pred) / (2 * tf.exp(log_var))
-        reg = 0.5 * log_var
-        return tf.reduce_mean(mse + reg)
-
-    def train(self, train_data, valid_data, epochs=20, train_steps=1000, valid_steps=200):
-        self.compile(optimizer='adam', loss=self.custom_loss)
-        history = self.fit(train_data, validation_data=valid_data, epochs=epochs,
-                           steps_per_epoch=train_steps, validation_steps=valid_steps)
-        return history
-
-    def mc_dropout_predict(self, x, num_samples=50):
-        preds = np.array([self(x, training=True)[:, 0].numpy() for _ in range(num_samples)])
-        mean_prediction = preds.mean(axis=0)
-        epistemic_uncertainty = preds.std(axis=0)
-        return mean_prediction, epistemic_uncertainty
+    def predict_age(self, img_path):
+        img = tf.keras.preprocessing.image.load_img(img_path, target_size=(224, 224))
+        img_array = tf.keras.preprocessing.image.img_to_array(img) / 255.0
+        img_array = tf.expand_dims(img_array, axis=0)
+        return self.predict(img_array)[0][0]
