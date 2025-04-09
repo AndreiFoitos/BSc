@@ -38,7 +38,6 @@ class AgeEstimationModel(tf.keras.Model):
         x = self.base_model(inputs, training=True)
         x = self.global_avg_pool(x)
 
-        # Pass through dense layers with batch normalization and activation functions
         x = self.dense1(x)
         x = self.batch_norm1(x)
         x = self.relu1(x)
@@ -61,7 +60,7 @@ class AgeEstimationModel(tf.keras.Model):
     def train(self, train_data, valid_data, epochs=20, train_steps=1000, valid_steps=200):
         self.compile(
             optimizer='adam',
-            loss={  # MSE for both age avg and std
+            loss={
                 "apparent_age_avg": 'mse',
                 "apparent_age_std": 'mse'
             }
@@ -69,13 +68,12 @@ class AgeEstimationModel(tf.keras.Model):
         
         early_stopping = EarlyStopping(
             monitor='val_loss',
-            patience=10,  # Lower patience for faster early stopping
+            patience=10,
             min_delta=0.001,
             restore_best_weights=True,
             verbose=1
         )
 
-        # Train the top layers initially
         history = self.fit(
             train_data,
             validation_data=valid_data,
@@ -87,12 +85,10 @@ class AgeEstimationModel(tf.keras.Model):
         return history
 
     def fine_tune(self, train_data, valid_data, epochs=5, train_steps=1000, valid_steps=200):
-        # Unfreeze the last N layers of the DenseNet base model for fine-tuning
         layers_to_unfreeze = 40
         for layer in self.base_model.layers[-layers_to_unfreeze:]:
             layer.trainable = True
         
-        # Re-compile with a smaller learning rate for fine-tuning
         self.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
             loss={

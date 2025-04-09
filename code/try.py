@@ -20,5 +20,5 @@ def find_suspicious_predictions(csv_path, large_error_threshold=20, low_predicti
     print(f"\nPredictions with predicted age < {low_prediction_threshold}:")
     print(low_predictions[["file_name", "apparent_age_avg", "predicted_age", "error"]])
 
-# --- Run Suspicious Prediction Search ---
+
 find_suspicious_predictions("predictions_with_outputs.csv")
