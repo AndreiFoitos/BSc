@@ -1,8 +1,8 @@
 import tensorflow as tf
 import matplotlib.pyplot as plt
-from model import AgeEstimationModel
-from data_loader import AgePredictionDataLoader
 import os
+from model import AgeEstimationModel, EnsembleAgeEstimator
+from data_loader import AgePredictionDataLoader
 
 BASE_DIR = "appa-real-release/appa-real-release"
 TRAIN_DIR = os.path.join(BASE_DIR, "train")
@@ -18,39 +18,85 @@ valid_data = valid_loader.get_dataset().repeat()
 
 print("Dataset loaded.")
 
-model = AgeEstimationModel()
-print("Model initialized.")
+USE_ENSEMBLE = False
+NUM_MODELS = 5
+USE_FLIPOUT = False
+USE_DROPCONNECT = False
+DROPCONNECT_RATE = 0.2
+DROPOUT_RATE = 0.3
 
-history = model.train(train_data, valid_data, epochs=100, train_steps=130, valid_steps=50)
+EPOCHS = 1
+FINE_TUNE_EPOCHS = 1
+TRAIN_STEPS = 10
+VALID_STEPS = 5
 
-# Fine-tune the model after initial training
-fine_tune_history = model.fine_tune(train_data, valid_data, epochs=10, train_steps=130, valid_steps=50)
-
-model.save("age_estimation_model.keras")
-print("Model training complete and saved as age_estimation_model.keras")
-
-def plot_learning_curves(history):
+def plot_learning_curves(history, title_prefix=''):
     plt.figure(figsize=(10, 5))
 
     plt.plot(history['apparent_age_avg_loss'], label='Train Loss (Avg)')
-    plt.plot(history['val_apparent_age_avg_loss'], label='Validation Loss (Avg)')
+    plt.plot(history['val_apparent_age_avg_loss'], label='Val Loss (Avg)')
     plt.plot(history['apparent_age_std_loss'], label='Train Loss (Std)')
-    plt.plot(history['val_apparent_age_std_loss'], label='Validation Loss (Std)')
+    plt.plot(history['val_apparent_age_std_loss'], label='Val Loss (Std)')
+
     plt.xlabel('Epochs')
     plt.ylabel('Loss (MSE)')
-    plt.title('Loss Curves (MSE)')
+    plt.title(f'{title_prefix} Loss Curves')
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.show()
 
-if hasattr(history, 'history'):
-    history_dict = history.history
-    plot_learning_curves(history_dict)
 
-    print("Final Train MSE (Avg):", history_dict['apparent_age_avg_loss'][-1])
-    print("Final Val MSE (Avg):", history_dict['val_apparent_age_avg_loss'][-1])
-    print("Final Train MSE (Std):", history_dict['apparent_age_std_loss'][-1])
-    print("Final Val MSE (Std):", history_dict['val_apparent_age_std_loss'][-1])
+if USE_ENSEMBLE:
+    print(f"Initializing Ensemble with {NUM_MODELS} models (Flipout: {USE_FLIPOUT}, DropConnect: {USE_DROPCONNECT})")
+
+    ensemble = EnsembleAgeEstimator(
+        num_models=NUM_MODELS,
+        dropout_rate=DROPOUT_RATE,
+        use_flipout=USE_FLIPOUT,
+        use_dropconnect=USE_DROPCONNECT,
+        dropconnect_rate=DROPCONNECT_RATE
+    )
+
+    ensemble.compile_all()
+    histories = ensemble.fit_all(train_data, valid_data, epochs=EPOCHS,
+                                 train_steps=TRAIN_STEPS, valid_steps=VALID_STEPS)
+
+    for i, history in enumerate(histories):
+        if hasattr(history, 'history'):
+            plot_learning_curves(history.history, title_prefix=f'Model {i+1}')
+            final_avg = history.history['val_apparent_age_avg_loss'][-1]
+            final_std = history.history['val_apparent_age_std_loss'][-1]
+            print(f"Model {i+1} Final Val MSE - Avg: {final_avg:.4f}, Std: {final_std:.4f}")
+
+    print("Ensemble training complete.")
+
+    for i, model in enumerate(ensemble.models):
+        model.save(f"ensemble_model_{i+1}.keras")
+
 else:
-    print("History object does not contain history dictionary.")
+    print("Initializing Single Age Estimation Model")
+    model = AgeEstimationModel(
+        dropout_rate=DROPOUT_RATE,
+        use_flipout=USE_FLIPOUT,
+        use_dropconnect=USE_DROPCONNECT,
+        dropconnect_rate=DROPCONNECT_RATE
+    )
+
+    print("Model initialized.")
+    history = model.train(train_data, valid_data, epochs=EPOCHS,
+                          train_steps=TRAIN_STEPS, valid_steps=VALID_STEPS)
+
+    fine_tune_history = model.fine_tune(train_data, valid_data,
+                                        epochs=FINE_TUNE_EPOCHS,
+                                        train_steps=TRAIN_STEPS,
+                                        valid_steps=VALID_STEPS)
+
+    model.save("age_estimation_model.keras")
+    print("Model saved to age_estimation_model.keras")
+
+    if hasattr(history, 'history'):
+        plot_learning_curves(history.history, title_prefix='Initial Training')
+        final_avg = history.history['val_apparent_age_avg_loss'][-1]
+        final_std = history.history['val_apparent_age_std_loss'][-1]
+        print(f"Final Val MSE - Avg: {final_avg:.4f}, Std: {final_std:.4f}")
