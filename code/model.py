@@ -1,5 +1,6 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
+import numpy as np
 from tensorflow.keras.applications import DenseNet121
 from tensorflow.keras.layers import Dense, Dropout, GlobalAveragePooling2D, BatchNormalization, LeakyReLU
 from tensorflow.keras.callbacks import EarlyStopping
@@ -16,6 +17,17 @@ class DropConnectDense(Dense):
             drop_mask = tf.nn.dropout(tf.ones_like(kernel), rate=self.dropconnect_rate)
             kernel = kernel * drop_mask
         return tf.matmul(inputs, kernel) + self.bias
+
+
+def gaussian_nll(y_true, y_pred):
+    mean = y_pred[:, 0]
+    std = y_pred[:, 1]
+
+    epsilon = 1e-6
+    std = tf.clip_by_value(std, epsilon, tf.reduce_max(std))
+
+    nll = 0.5 * tf.math.log(2.0 * np.pi * tf.square(std)) + tf.square(y_true[:, 0] - mean) / (2.0 * tf.square(std))
+    return tf.reduce_mean(nll)
 
 
 @tf.keras.utils.register_keras_serializable()
@@ -41,11 +53,10 @@ class AgeEstimationModel(tf.keras.Model):
         self.batch_norm2 = BatchNormalization()
         self.relu2 = LeakyReLU(alpha=0.1)
 
-
         self.dropout = Dropout(dropout_rate)
 
-        self.age_avg_output = Dense(1, activation='relu', name='apparent_age_avg')
-        self.age_std_output = Dense(1, activation='relu', name='apparent_age_std')
+        self.age_avg_output = Dense(1, activation='relu')  # Mean
+        self.age_std_output = Dense(1, activation='softplus')  # Std
 
     def _get_dense(self, units):
         if self.use_flipout:
@@ -69,20 +80,20 @@ class AgeEstimationModel(tf.keras.Model):
 
         x = self.dropout(x, training=training)
 
-        return {
-            "apparent_age_avg": self.age_avg_output(x),
-            "apparent_age_std": self.age_std_output(x)
-        }
+        mean = self.age_avg_output(x)
+        std = self.age_std_output(x)
+
+        return tf.concat([mean, std], axis=-1)  # (batch_size, 2)
 
     def train(self, train_data, valid_data, epochs=20, train_steps=1000, valid_steps=200):
         self.compile(
             optimizer='adam',
-            loss={"apparent_age_avg": 'mse', "apparent_age_std": 'mse'}
+            loss=gaussian_nll
         )
 
         early_stopping = EarlyStopping(
             monitor='val_loss',
-            patience=10,
+            patience=5,
             min_delta=0.001,
             restore_best_weights=True,
             verbose=1
@@ -104,12 +115,12 @@ class AgeEstimationModel(tf.keras.Model):
 
         self.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
-            loss={"apparent_age_avg": 'mse', "apparent_age_std": 'mse'}
+            loss=gaussian_nll
         )
 
         early_stopping = EarlyStopping(
             monitor='val_loss',
-            patience=10,
+            patience=5,
             min_delta=0.001,
             restore_best_weights=True,
             verbose=1
@@ -144,11 +155,12 @@ class AgeEstimationModel(tf.keras.Model):
         img = tf.keras.preprocessing.image.load_img(img_path, target_size=(224, 224))
         img_array = tf.keras.preprocessing.image.img_to_array(img) / 255.0
         img_array = tf.expand_dims(img_array, axis=0)
-        prediction = self.predict(img_array)
+        prediction = self.predict(img_array)[0]
         return {
-            "apparent_age_avg": prediction["apparent_age_avg"].numpy()[0][0],
-            "apparent_age_std": prediction["apparent_age_std"].numpy()[0][0]
+            "apparent_age_avg": prediction[0].numpy(),
+            "apparent_age_std": prediction[1].numpy()
         }
+
 
 class EnsembleAgeEstimator:
     def __init__(self, num_models=5, **model_kwargs):
@@ -158,7 +170,7 @@ class EnsembleAgeEstimator:
         for model in self.models:
             model.compile(
                 optimizer='adam',
-                loss={"apparent_age_avg": 'mse', "apparent_age_std": 'mse'}
+                loss=gaussian_nll
             )
 
     def fit_all(self, train_data, valid_data, epochs=20, train_steps=1000, valid_steps=200):
