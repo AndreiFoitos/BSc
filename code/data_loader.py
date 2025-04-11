@@ -1,7 +1,7 @@
 import tensorflow as tf
 import pandas as pd
 import os
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.preprocessing.image import ImageDataGenerator # type: ignore
 
 class AgePredictionDataLoader:
     def __init__(self, data_dir, labels_csv, batch_size=32, target_size=(224, 224)):

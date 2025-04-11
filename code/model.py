@@ -1,9 +1,9 @@
 import tensorflow as tf
-import tensorflow_probability as tfp
+import tensorflow_probability as tfp # type: ignore
 import numpy as np
-from tensorflow.keras.applications import DenseNet121
-from tensorflow.keras.layers import Dense, Dropout, GlobalAveragePooling2D, BatchNormalization, LeakyReLU
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.applications import DenseNet121 # type: ignore
+from tensorflow.keras.layers import Dense, Dropout, GlobalAveragePooling2D, BatchNormalization, LeakyReLU # type: ignore
+from tensorflow.keras.callbacks import EarlyStopping # type: ignore
 
 
 class DropConnectDense(Dense):
