@@ -13,6 +13,7 @@ TEST_DIR = os.path.join(BASE_DIR, "test")
 TEST_CSV = os.path.join(BASE_DIR, "gt_avg_test.csv")
 MODEL_PATH = "age_estimation_model.keras"
 
+
 ENSEMBLE_MODE = False  # Set to True if using multiple models
 ENSEMBLE_MODEL_PATHS = [
     "ensemble_model_1.keras",
@@ -22,10 +23,38 @@ ENSEMBLE_MODEL_PATHS = [
     "ensemble_model_5.keras"
 ]
 
-test_loader = AgePredictionDataLoader(TEST_DIR, TEST_CSV, batch_size=32)
-test_data = test_loader.get_dataset()
 
+def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
+    df = pd.read_csv(test_csv_path)
+    df["face_file_name"] = df["file_name"].apply(lambda x: f"{x}_face.jpg")
+
+    df["face_path"] = df["face_file_name"].apply(lambda fname: os.path.join(test_dir, fname))
+    df = df[df["face_path"].apply(os.path.exists)].reset_index(drop=True)
+
+    image_paths = df["face_path"].tolist()
+    apparent_age_avg = df["real_age"].astype(np.float32).values
+    apparent_age_std = df["apparent_age_std"].astype(np.float32).values
+
+    def load_and_preprocess_image(path):
+        img = tf.keras.utils.load_img(path, target_size=img_size)
+        img_array = tf.keras.utils.img_to_array(img)
+        img_array = img_array / 255.0
+        return img_array
+
+    images = np.array([load_and_preprocess_image(path) for path in image_paths])
+    labels = {
+        "apparent_age_avg": apparent_age_avg,
+        "apparent_age_std": apparent_age_std
+    }
+
+    dataset = tf.data.Dataset.from_tensor_slices((images, labels))
+    dataset = dataset.batch(batch_size)
+    return dataset
+
+
+test_data = load_test_data(TEST_DIR, TEST_CSV)
 print("Test dataset loaded.")
+
 
 # --- Load Model (if not ensemble) ---
 if not ENSEMBLE_MODE:
@@ -43,13 +72,13 @@ def evaluate_with_dataloader(model, dataset):
 
     for batch in dataset:
         images, labels = batch
-        preds = model.predict(images, verbose=0)
+        preds = model.predict(images, verbose=1)
 
-        pred_avg = preds[:, 0].flatten()
-        pred_std = preds[:, 1].flatten()
+        pred_avg = preds["apparent_age_avg"].flatten()
+        pred_std = preds["apparent_age_std"].flatten()
 
-        actual_avg = labels[:, 0].numpy().flatten()  # ← fixed
-        actual_std = labels[:, 1].numpy().flatten()  # ← fixed
+        actual_avg = labels["apparent_age_avg"].numpy().flatten()
+        actual_std = labels["apparent_age_std"].numpy().flatten()
 
         batch_errors = np.abs(pred_avg - actual_avg)
 
@@ -60,10 +89,14 @@ def evaluate_with_dataloader(model, dataset):
         predicted_stds.extend(pred_std)
 
     mse = np.mean(np.square(errors))
+    rmse = np.sqrt(mse)
+    mae = np.mean(errors)
     r2 = r2_score(actual_ages, predicted_ages)
 
     print(f"\nEvaluation Results:")
+    print(f"Mean Absolute Error (MAE): {mae:.2f}")
     print(f"Mean Squared Error (MSE): {mse:.2f}")
+    print(f"Root Mean Squared Error (RMSE): {rmse:.2f}")
     print(f"R² Score: {r2:.3f}")
 
     plot_results(actual_ages, predicted_ages, predicted_stds)
@@ -166,22 +199,27 @@ def plot_calibration_curve(actual_ages, predicted_ages, num_bins=10):
     plt.grid(True)
     plt.show()
 
-# --- Export Predictions ---
+
 def export_predictions_to_csv(model, dataset, original_csv_path, output_csv_path="predictions_with_outputs_ensamble.csv"):
     df = pd.read_csv(original_csv_path)
 
     predicted_ages = []
     predicted_stds = []
 
-    for batch in dataset:
-        images, _ = batch  # Don't need labels
-        preds = model.predict(images, verbose=0)
+    batch_index = 0
 
-        pred_avg = preds[:, 0].flatten()
-        pred_std = preds[:, 1].flatten()
+    for batch in dataset:
+        images, labels = batch
+        preds = model.predict(images, verbose=1)
+
+        pred_avg = preds["apparent_age_avg"].flatten()
+        pred_std = preds["apparent_age_std"].flatten()
 
         predicted_ages.extend(pred_avg.tolist())
         predicted_stds.extend(pred_std.tolist())
+
+        batch_index += 1
+
 
     if len(predicted_ages) != len(df):
         print("Warning: Mismatch between number of predictions and CSV entries. Truncating to shortest.")
@@ -196,8 +234,6 @@ def export_predictions_to_csv(model, dataset, original_csv_path, output_csv_path
     df.to_csv(output_csv_path, index=False)
     print(f"\nPredictions saved to {output_csv_path}")
 
-
-# --- Ensemble Support ---
 def load_ensemble_model_predictions(dataset, model_paths):
     all_preds_avg = []
     all_preds_std = []
@@ -210,12 +246,13 @@ def load_ensemble_model_predictions(dataset, model_paths):
 
         for batch in dataset:
             images, _ = batch
-            preds = model.predict(images, verbose=0)
-            preds_avg.append(preds[:, 0])
-            preds_std.append(preds[:, 1])
+            preds = model.predict(images, verbose=1)
+            preds_avg.append(preds["apparent_age_avg"])
+            preds_std.append(preds["apparent_age_std"])
 
         all_preds_avg.append(np.concatenate(preds_avg))
         all_preds_std.append(np.concatenate(preds_std))
+
 
     stacked_avg = np.stack(all_preds_avg, axis=0)
     stacked_std = np.stack(all_preds_std, axis=0)
@@ -225,25 +262,27 @@ def load_ensemble_model_predictions(dataset, model_paths):
 
     return final_avg, final_std
 
-# --- Dummy Model for Ensemble Compatibility ---
-class DummyModel:
-    def __init__(self, avg, std):
-        self.avg = avg
-        self.std = std
-        self.idx = 0
 
-    def predict(self, images, verbose=0):
-        batch_size = images.shape[0]
-        start = self.idx
-        end = start + batch_size
-        self.idx = end
-        return np.stack([self.avg[start:end], self.std[start:end]], axis=-1)
-
-# --- Run Evaluation ---
 if ENSEMBLE_MODE:
     print("Running ensemble evaluation...")
     test_dataset_batched = list(test_data)
     pred_avg, pred_std = load_ensemble_model_predictions(test_dataset_batched, ENSEMBLE_MODEL_PATHS)
+
+    class DummyModel:
+        def __init__(self, avg, std):
+            self.avg = avg
+            self.std = std
+            self.idx = 0
+
+        def predict(self, images, verbose=0):
+            batch_size = images.shape[0]
+            start = self.idx
+            end = start + batch_size
+            self.idx = end
+            return {
+                "apparent_age_avg": self.avg[start:end],
+                "apparent_age_std": self.std[start:end]
+            }
 
     dummy_model = DummyModel(pred_avg, pred_std)
     evaluate_with_dataloader(dummy_model, test_dataset_batched)
