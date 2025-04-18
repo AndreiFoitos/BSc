@@ -7,27 +7,15 @@ from data_loader import AgePredictionDataLoader
 import pandas as pd
 from sklearn.metrics import r2_score
 
-
 BASE_DIR = "appa-real-release/appa-real-release"
 TEST_DIR = os.path.join(BASE_DIR, "test")
 TEST_CSV = os.path.join(BASE_DIR, "gt_avg_test.csv")
-MODEL_PATH = "age_estimation_model.keras"
-
-
-ENSEMBLE_MODE = False  # Set to True if using multiple models
-ENSEMBLE_MODEL_PATHS = [
-    "ensemble_model_1.keras",
-    "ensemble_model_2.keras",
-    "ensemble_model_3.keras",
-    "ensemble_model_4.keras",
-    "ensemble_model_5.keras"
-]
+MODEL_PATH = "age_estimation_model_two_phase.keras"
 
 
 def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
     df = pd.read_csv(test_csv_path)
     df["face_file_name"] = df["file_name"].apply(lambda x: f"{x}_face.jpg")
-
     df["face_path"] = df["face_file_name"].apply(lambda fname: os.path.join(test_dir, fname))
     df = df[df["face_path"].apply(os.path.exists)].reset_index(drop=True)
 
@@ -51,19 +39,7 @@ def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
     dataset = dataset.batch(batch_size)
     return dataset
 
-
-test_data = load_test_data(TEST_DIR, TEST_CSV)
-print("Test dataset loaded.")
-
-
-# --- Load Model (if not ensemble) ---
-if not ENSEMBLE_MODE:
-    print("Loading model...")
-    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-    print("Model loaded successfully.")
-
-# --- Evaluation Function ---
-def evaluate_with_dataloader(model, dataset):
+def evaluate_with_dataloader(model, dataset, return_predictions=False):
     actual_ages = []
     predicted_ages = []
     actual_stds = []
@@ -106,8 +82,52 @@ def evaluate_with_dataloader(model, dataset):
     plot_heatmap(actual_ages, predicted_ages)
     plot_calibration_curve(actual_ages, predicted_ages)
 
+    if return_predictions:
+        return predicted_ages, predicted_stds
 
-# --- Plotting Functions ---
+def export_predictions_to_csv(predicted_ages, predicted_stds, original_csv_path, output_csv_path="predictions_with_outputs_ensamble.csv"):
+    df = pd.read_csv(original_csv_path)
+
+    if len(predicted_ages) != len(df):
+        print("Warning: Mismatch between number of predictions and CSV entries. Truncating to shortest.")
+        min_len = min(len(predicted_ages), len(df))
+        df = df.iloc[:min_len]
+        predicted_ages = predicted_ages[:min_len]
+        predicted_stds = predicted_stds[:min_len]
+
+    df["predicted_age"] = predicted_ages
+    df["predicted_std"] = predicted_stds
+
+    df.to_csv(output_csv_path, index=False)
+    print(f"\nPredictions saved to {output_csv_path}")
+
+def load_ensemble_model_predictions(dataset, model_paths):
+    all_preds_avg = []
+    all_preds_std = []
+
+    for path in model_paths:
+        print(f"Loading {path}...")
+        model = tf.keras.models.load_model(path, compile=False)
+        preds_avg = []
+        preds_std = []
+
+        for batch in dataset:
+            images, _ = batch
+            preds = model.predict(images, verbose=1)
+            preds_avg.append(preds["apparent_age_avg"])
+            preds_std.append(preds["apparent_age_std"])
+
+        all_preds_avg.append(np.concatenate(preds_avg))
+        all_preds_std.append(np.concatenate(preds_std))
+
+    stacked_avg = np.stack(all_preds_avg, axis=0)
+    stacked_std = np.stack(all_preds_std, axis=0)
+
+    final_avg = np.mean(stacked_avg, axis=0)
+    final_std = np.mean(stacked_std, axis=0)
+
+    return final_avg, final_std
+
 def plot_results(actual_ages, predicted_ages, predicted_stds):
     plt.figure(figsize=(8, 8))
     plt.errorbar(actual_ages, predicted_ages, yerr=predicted_stds, fmt='o', alpha=0.6, label="Predictions with Std Dev")
@@ -199,98 +219,16 @@ def plot_calibration_curve(actual_ages, predicted_ages, num_bins=10):
     plt.grid(True)
     plt.show()
 
-
-def export_predictions_to_csv(model, dataset, original_csv_path, output_csv_path="predictions_with_outputs_ensamble.csv"):
-    df = pd.read_csv(original_csv_path)
-
-    predicted_ages = []
-    predicted_stds = []
-
-    batch_index = 0
-
-    for batch in dataset:
-        images, labels = batch
-        preds = model.predict(images, verbose=1)
-
-        pred_avg = preds["apparent_age_avg"].flatten()
-        pred_std = preds["apparent_age_std"].flatten()
-
-        predicted_ages.extend(pred_avg.tolist())
-        predicted_stds.extend(pred_std.tolist())
-
-        batch_index += 1
+# --- Main Execution ---
+test_data = load_test_data(TEST_DIR, TEST_CSV)
+print("Test dataset loaded.")
 
 
-    if len(predicted_ages) != len(df):
-        print("Warning: Mismatch between number of predictions and CSV entries. Truncating to shortest.")
-        min_len = min(len(predicted_ages), len(df))
-        df = df.iloc[:min_len]
-        predicted_ages = predicted_ages[:min_len]
-        predicted_stds = predicted_stds[:min_len]
+# --- Load Model ---
+print("Loading model...")
+model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+print("Model loaded successfully.")
 
-    df["predicted_age"] = predicted_ages
-    df["predicted_std"] = predicted_stds
-
-    df.to_csv(output_csv_path, index=False)
-    print(f"\nPredictions saved to {output_csv_path}")
-
-def load_ensemble_model_predictions(dataset, model_paths):
-    all_preds_avg = []
-    all_preds_std = []
-
-    for path in model_paths:
-        print(f"Loading {path}...")
-        model = tf.keras.models.load_model(path, compile=False)
-        preds_avg = []
-        preds_std = []
-
-        for batch in dataset:
-            images, _ = batch
-            preds = model.predict(images, verbose=1)
-            preds_avg.append(preds["apparent_age_avg"])
-            preds_std.append(preds["apparent_age_std"])
-
-        all_preds_avg.append(np.concatenate(preds_avg))
-        all_preds_std.append(np.concatenate(preds_std))
-
-
-    stacked_avg = np.stack(all_preds_avg, axis=0)
-    stacked_std = np.stack(all_preds_std, axis=0)
-
-    final_avg = np.mean(stacked_avg, axis=0)
-    final_std = np.mean(stacked_std, axis=0)
-
-    return final_avg, final_std
-
-
-if ENSEMBLE_MODE:
-    print("Running ensemble evaluation...")
-    test_dataset_batched = list(test_data)
-    pred_avg, pred_std = load_ensemble_model_predictions(test_dataset_batched, ENSEMBLE_MODEL_PATHS)
-
-    class DummyModel:
-        def __init__(self, avg, std):
-            self.avg = avg
-            self.std = std
-            self.idx = 0
-
-        def predict(self, images, verbose=0):
-            batch_size = images.shape[0]
-            start = self.idx
-            end = start + batch_size
-            self.idx = end
-            return {
-                "apparent_age_avg": self.avg[start:end],
-                "apparent_age_std": self.std[start:end]
-            }
-
-    dummy_model = DummyModel(pred_avg, pred_std)
-    evaluate_with_dataloader(dummy_model, test_dataset_batched)
-
-    dummy_model.idx = 0
-    export_predictions_to_csv(dummy_model, test_dataset_batched, TEST_CSV)
-
-else:
-    print("Running evaluation on single model...")
-    evaluate_with_dataloader(model, test_data)
-    export_predictions_to_csv(model, test_data, TEST_CSV)
+print("Running evaluation on single model...")
+predicted_ages, predicted_stds = evaluate_with_dataloader(model, test_data, return_predictions=True)
+export_predictions_to_csv(predicted_ages, predicted_stds, TEST_CSV)

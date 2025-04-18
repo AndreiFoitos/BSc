@@ -3,11 +3,11 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.preprocessing.image import ImageDataGenerator # type: ignore
 
 class AgePredictionDataLoader:
     def __init__(self, data_dir, labels_csv, batch_size=32, target_size=(224, 224),
-                 num_samples=1000, bins=10, visualize=True):
+                 num_samples=None, bins=None, visualize=False):
         self.data_dir = data_dir
         self.labels_csv = labels_csv
         self.batch_size = batch_size
@@ -95,7 +95,7 @@ class AgePredictionDataLoader:
                     except Exception as e:
                         continue
 
-    def get_dataset(self, shuffle=True, repeat=False, prefetch=True):
+    def get_dataset(self, shuffle=True, repeat=True, prefetch=True):
         dataset = tf.data.Dataset.from_generator(
             self._custom_generator,
             output_signature=(
