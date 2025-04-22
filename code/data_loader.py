@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from tensorflow.keras.preprocessing.image import ImageDataGenerator # type: ignore
+from tensorflow.keras.preprocessing.image import ImageDataGenerator  # type: ignore
+from tensorflow.keras.applications.densenet import preprocess_input #type: ignore
 
 class AgePredictionDataLoader:
     def __init__(self, data_dir, labels_csv, batch_size=32, target_size=(224, 224),
@@ -21,6 +22,9 @@ class AgePredictionDataLoader:
 
         if self.visualize:
             self._visualize_distribution()
+        
+
+
 
     def _create_datagen(self):
         return ImageDataGenerator(
@@ -31,14 +35,13 @@ class AgePredictionDataLoader:
             zoom_range=[0.8, 1.2],
             horizontal_flip=True,
             brightness_range=[0.8, 1.2],
-            rescale=1.0 / 255.0
         )
 
     def _load_labels(self):
         df = pd.read_csv(self.labels_csv)
 
         if self.num_samples is None or self.bins is None:
-            return df  # no balanced sampling, return all
+            return df  # return all entries
 
         df['age_bin'] = pd.cut(df["apparent_age_avg"], bins=self.bins, labels=False)
         per_bin = max(1, self.num_samples // self.bins)
@@ -48,7 +51,6 @@ class AgePredictionDataLoader:
         ).reset_index(drop=True)
 
         return sampled_df
-
 
     def _build_label_dict(self):
         return dict(zip(
@@ -66,34 +68,45 @@ class AgePredictionDataLoader:
         plt.show()
 
     def _custom_generator(self):
-        image_files = os.listdir(self.data_dir)
         used = set()
+        matched = 0
+        skipped = 0
+        image_files = [f for f in os.listdir(self.data_dir) if f.endswith("_face.jpg")]
 
         for img_name in image_files:
-            if img_name.endswith("_face.jpg"):
-                csv_name = img_name.replace(".jpg_face.jpg", ".jpg")
+            
+                csv_name = img_name.replace("_face.jpg", "")
+            
 
                 if csv_name in self.labels and csv_name not in used:
                     used.add(csv_name)
                     img_path = os.path.join(self.data_dir, img_name)
 
                     if not os.path.exists(img_path):
+                        skipped += 1
                         continue
 
                     try:
                         img = tf.keras.preprocessing.image.load_img(img_path, target_size=self.target_size)
                         img_array = tf.keras.preprocessing.image.img_to_array(img)
                         img_array = self.datagen.random_transform(img_array)
-                        img_array = img_array / 255.0
+                        img_array = preprocess_input(img_array)
                         age_label, std_label = self.labels[csv_name]
+                        matched += 1
 
                         yield img_array, {
                             "apparent_age_avg": tf.convert_to_tensor(age_label, dtype=tf.float32),
                             "apparent_age_std": tf.convert_to_tensor(std_label, dtype=tf.float32)
                         }
-
                     except Exception as e:
+                        print(f"[ERROR] Failed to process image {img_path}: {e}")
+                        skipped += 1
                         continue
+
+
+
+
+
 
     def get_dataset(self, shuffle=True, repeat=True, prefetch=True):
         dataset = tf.data.Dataset.from_generator(
@@ -108,7 +121,7 @@ class AgePredictionDataLoader:
         )
 
         if shuffle:
-            dataset = dataset.shuffle(buffer_size=self.num_samples)
+            dataset = dataset.shuffle(buffer_size=self.num_samples or 1000)
 
         if repeat:
             dataset = dataset.repeat()

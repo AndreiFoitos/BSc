@@ -1,40 +1,77 @@
 import tensorflow as tf
-from tensorflow.keras.applications import DenseNet121  # type: ignore
-from tensorflow.keras.models import Model  # type: ignore
-from tensorflow.keras.layers import Dense, Dropout, GlobalAveragePooling2D, BatchNormalization, LeakyReLU  # type: ignore
-from tensorflow.keras.callbacks import EarlyStopping  # type: ignore
+import tensorflow_probability as tfp
+from tensorflow.keras import regularizers # type: ignore
+from tensorflow.keras.applications import DenseNet121 # type: ignore
+from tensorflow.keras.models import Model # type: ignore
+from tensorflow.keras.layers import Dense, Dropout, GlobalAveragePooling2D, BatchNormalization, LeakyReLU # type: ignore
+from tensorflow.keras.callbacks import EarlyStopping # type: ignore
+
+class DropConnectDense(Dense):
+    def __init__(self, units, dropconnect_rate=0.0, **kwargs):
+        super(DropConnectDense, self).__init__(units, **kwargs)
+        self.dropconnect_rate = dropconnect_rate
+
+    def call(self, inputs, training=False):
+        kernel = self.kernel
+        if training and self.dropconnect_rate > 0:
+            # Apply DropConnect to kernel
+            random_tensor = tf.nn.dropout(tf.ones_like(kernel), rate=self.dropconnect_rate)
+            kernel = tf.multiply(kernel, random_tensor)
+        output = tf.matmul(inputs, kernel)
+        if self.use_bias:
+            output = tf.nn.bias_add(output, self.bias)
+        if self.activation is not None:
+            output = self.activation(output)
+        return output
+
+
+tfpl = tfp.layers
 
 
 @tf.keras.utils.register_keras_serializable()
 class AgeEstimationModel(tf.keras.Model):
-    def __init__(self, input_shape=(224, 224, 3), dropout_rate=0.5, **kwargs):
+    def __init__(self, input_shape=(224, 224, 3), dropout_rate=0.5, use_flipout=False, use_dropconnect=False, dropconnect_rate=0.3, **kwargs):
         super(AgeEstimationModel, self).__init__(**kwargs)
+        self.use_flipout = use_flipout
+        self.use_dropconnect = use_dropconnect
+        self.dropout_rate = dropout_rate
+        self.dropconnect_rate = dropconnect_rate
+
         self.base_model = DenseNet121(weights='imagenet', include_top=False, input_shape=input_shape)
-        self.base_model.trainable = False  # Initially freeze all layers
+        self.base_model.trainable = False
 
         self.global_avg_pool = GlobalAveragePooling2D()
 
-        # First dense layer
-        self.dense1 = Dense(1024, activation=None)  # Larger number of neurons
+        self.dense1 = self.get_dense_layer(512)
         self.batch_norm1 = BatchNormalization()
-        self.relu1 = LeakyReLU(alpha=0.1)  # Leaky ReLU for better training stability
+        self.relu1 = LeakyReLU(alpha=0.1)
 
-        # Second dense layer
-        self.dense2 = Dense(512, activation=None)
+        self.dense2 = self.get_dense_layer(256)
         self.batch_norm2 = BatchNormalization()
         self.relu2 = LeakyReLU(alpha=0.1)
 
+        self.age_avg_head = Dense(128, activation='relu')
+        self.age_std_head = Dense(128, activation='relu')
+
         self.dropout = Dropout(dropout_rate)
 
-        # Output layers for age prediction
-        self.age_avg_output = Dense(1, activation='relu', name='apparent_age_avg')  # Changed to sigmoid
+        self.age_avg_output = Dense(1, activation='relu', name='apparent_age_avg')
         self.age_std_output = Dense(1, activation='softplus', name='apparent_age_std')
+
+
+    def get_dense_layer(self, units):
+        if self.use_flipout:
+            return tfpl.DenseFlipout(units, activation=None)
+        elif self.use_dropconnect:
+            return DropConnectDense(units, dropconnect_rate=self.dropconnect_rate, activation=None)
+        else:
+            kernel_regularizer = regularizers.l2(1e-4)
+            return Dense(units, activation=None, kernel_regularizer=kernel_regularizer)
 
     def call(self, inputs):
         x = self.base_model(inputs, training=True)
         x = self.global_avg_pool(x)
 
-        # Pass through dense layers with batch normalization and activation functions
         x = self.dense1(x)
         x = self.batch_norm1(x)
         x = self.relu1(x)
@@ -45,17 +82,45 @@ class AgeEstimationModel(tf.keras.Model):
 
         x = self.dropout(x)
 
+        avg_branch = self.age_avg_head(x)
+        std_branch = self.age_std_head(x)
+
         return {
-            "apparent_age_avg": self.age_avg_output(x),
-            "apparent_age_std": self.age_std_output(x)
+            "apparent_age_avg": self.age_avg_output(avg_branch),
+            "apparent_age_std": self.age_std_output(std_branch)
         }
+
+    def get_config(self):
+        config = super(AgeEstimationModel, self).get_config()
+        config.update({
+            "input_shape": self.base_model.input_shape[1:],
+            "dropout_rate": self.dropout_rate,
+            "use_flipout": self.use_flipout,
+            "use_dropconnect": self.use_dropconnect,
+            "dropconnect_rate": self.dropconnect_rate
+        })
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(
+            input_shape=config['input_shape'],
+            dropout_rate=config['dropout_rate'],
+            use_flipout=config.get('use_flipout', False),
+            use_dropconnect=config.get('use_dropconnect', False),
+            dropconnect_rate=config.get('dropconnect_rate', 0.3),
+            name=config.get('name', None)
+        )
 
     # Two-phase training: Phase 1 - Single task (only average)
     def train_single_task(self, train_data, valid_data, epochs=10, train_steps=1000, valid_steps=200):
         self.compile(
             optimizer='adam',
-            loss={"apparent_age_avg": 'mse'},
-            metrics={"apparent_age_avg": tf.keras.metrics.MeanAbsoluteError()}  # Added MAE
+            loss={
+                "apparent_age_avg": 'mse',
+                "apparent_age_std": lambda y_true, y_pred: tf.reduce_mean(y_pred * 0)
+            },
+            metrics={"apparent_age_avg": tf.keras.metrics.MeanAbsoluteError()}
         )
 
         early_stopping = tf.keras.callbacks.EarlyStopping(
@@ -72,23 +137,27 @@ class AgeEstimationModel(tf.keras.Model):
             epochs=epochs,
             steps_per_epoch=train_steps,
             validation_steps=valid_steps,
-            callbacks=[early_stopping]
+            callbacks=[early_stopping],
+            verbose=1
         )
         return history
 
     # Phase 2: Multitask loss (avg + std)
     def train_multitask(self, train_data, valid_data, epochs=10, train_steps=1000, valid_steps=200):
+        layers_to_unfreeze = 100
+        for layer in self.base_model.layers[-layers_to_unfreeze:]:
+            layer.trainable = True
+
         self.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=2e-4),
             loss={
                 "apparent_age_avg": 'mse',
                 "apparent_age_std": "mse"
             },
-            loss_weights={
-                "apparent_age_avg": 1.0,
-                "apparent_age_std": 0.5  # <- You can tune this
-            },
-            metrics={"apparent_age_avg": tf.keras.metrics.MeanAbsoluteError()}
+            metrics={
+                "apparent_age_avg": [tf.keras.metrics.MeanAbsoluteError(), tf.keras.metrics.MeanSquaredError()],
+                "apparent_age_std": [tf.keras.metrics.MeanAbsoluteError(), tf.keras.metrics.MeanSquaredError()]
+            }
         )
 
         early_stopping = tf.keras.callbacks.EarlyStopping(
@@ -104,13 +173,14 @@ class AgeEstimationModel(tf.keras.Model):
             epochs=epochs,
             steps_per_epoch=train_steps,
             validation_steps=valid_steps,
-            callbacks=[early_stopping]
+            callbacks=[early_stopping],
+            verbose=1
         )
         return history
 
     def fine_tune(self, train_data, valid_data, epochs=5, train_steps=1000, valid_steps=200):
         # Unfreeze the last N layers of the DenseNet base model for fine-tuning
-        layers_to_unfreeze = 50
+        layers_to_unfreeze = 200
         for layer in self.base_model.layers[-layers_to_unfreeze:]:
             layer.trainable = True
 
@@ -121,11 +191,10 @@ class AgeEstimationModel(tf.keras.Model):
                 "apparent_age_avg": 'mse',
                 "apparent_age_std": 'mse'
             },
-            loss_weights={
-                "apparent_age_avg": 1.0,
-                "apparent_age_std": 0.5  # <- You can tune this
-            },
-            metrics={"apparent_age_avg": tf.keras.metrics.MeanAbsoluteError()}  # Added MAE
+            metrics={
+                "apparent_age_avg": [tf.keras.metrics.MeanAbsoluteError(), tf.keras.metrics.MeanSquaredError()],
+                "apparent_age_std": [tf.keras.metrics.MeanAbsoluteError(), tf.keras.metrics.MeanSquaredError()]
+            }
         )
 
         # Train the model with fine-tuning
@@ -143,25 +212,7 @@ class AgeEstimationModel(tf.keras.Model):
             epochs=epochs,
             steps_per_epoch=train_steps,
             validation_steps=valid_steps,
-            callbacks=[early_stopping]
+            callbacks=[early_stopping],
+            verbose=1
         )
         return fine_tune_history
-
-    def get_config(self):
-        config = super(AgeEstimationModel, self).get_config()
-        config.update({
-            "input_shape": self.base_model.input_shape[1:],
-            "dropout_rate": self.dropout.rate
-        })
-        return config
-
-    @classmethod
-    def from_config(cls, config):
-        return cls(input_shape=config['input_shape'], dropout_rate=config['dropout_rate'], name=config['name'])
-
-    def predict_age(self, img_path):
-        img = tf.keras.preprocessing.image.load_img(img_path, target_size=(224, 224))
-        img_array = tf.keras.preprocessing.image.img_to_array(img) / 255.0
-        img_array = tf.expand_dims(img_array, axis=0)
-        return self.predict(img_array)[0][0]  # Dictionary, first element for avg
-
