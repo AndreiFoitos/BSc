@@ -2,23 +2,19 @@ import tensorflow as tf
 import numpy as np
 import os
 import matplotlib.pyplot as plt
-from model import AgeEstimationModel
-from data_loader import AgePredictionDataLoader
 import pandas as pd
 from sklearn.metrics import r2_score
 
 # ================= Configuration =================
-USE_FLIPOUT = True
-USE_DROPCONNECT = False
+USE_FLIPOUT = False
+USE_DROPCONNECT = True
 USE_ENSEMBLE = False  # Set to True to evaluate ensemble
 
 NUM_ENSEMBLE_MODELS = 5
-MODEL_BASE_PATH = "ensemble_models"  # Folder where ensemble models are saved
+MODEL_BASE_PATH = "ensemble_models"
 
 TEST_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
 TEST_CSV = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_test.csv"
-MODEL_PATH = "age_estimation_model_two_phase.keras"  # Default single model path
-
 
 # ================= Load Test Data =================
 def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
@@ -48,200 +44,113 @@ def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
     return dataset
 
 
-# ================= Evaluation Functions =================
-def evaluate_with_dataloader(model, dataset, return_predictions=False):
-    actual_ages, predicted_ages, actual_stds, predicted_stds, errors = [], [], [], [], []
+# =================== MC Inference ===================
+def mc_inference(models, dataset, n_samples=20):
+    all_means = []
+    all_vars = []
 
-    for images, labels in dataset:
-        preds = model.predict(images, verbose=0)
-
-        pred_avg = preds["apparent_age_avg"].flatten()
-        pred_std = preds["apparent_age_std"].flatten()
-
-        actual_avg = labels["apparent_age_avg"].numpy().flatten()
-        actual_std = labels["apparent_age_std"].numpy().flatten()
-
-        errors.extend(np.abs(pred_avg - actual_avg))
-        actual_ages.extend(actual_avg)
-        predicted_ages.extend(pred_avg)
-        actual_stds.extend(actual_std)
-        predicted_stds.extend(pred_std)
-
-    mse = np.mean(np.square(errors))
-    rmse = np.sqrt(mse)
-    mae = np.mean(errors)
-    r2 = r2_score(actual_ages, predicted_ages)
-
-    print(f"\nEvaluation Results:")
-    print(f"MAE : {mae:.2f}")
-    print(f"MSE : {mse:.2f}")
-    print(f"RMSE: {rmse:.2f}")
-    print(f"R²  : {r2:.3f}")
-
-    plot_results(actual_ages, predicted_ages, predicted_stds)
-    plot_residuals(actual_ages, predicted_ages)
-    plot_residual_histogram(actual_ages, predicted_ages)
-    plot_binned_mse(actual_ages, predicted_ages)
-    plot_heatmap(actual_ages, predicted_ages)
-    plot_calibration_curve(actual_ages, predicted_ages)
-
-    if return_predictions:
-        return predicted_ages, predicted_stds
-
-
-def export_predictions_to_csv(predicted_ages, predicted_stds, original_csv_path, model_type="default"):
-    output_csv_path = f"predictions_{model_type}.csv"
-    df = pd.read_csv(original_csv_path)
-
-    min_len = min(len(predicted_ages), len(df))
-    df = df.iloc[:min_len]
-    df["predicted_age"] = predicted_ages[:min_len]
-    df["predicted_std"] = predicted_stds[:min_len]
-
-    df.to_csv(output_csv_path, index=False)
-    print(f"\nPredictions saved to {output_csv_path}")
-
-
-def load_ensemble_model_predictions(dataset, model_paths):
-    all_preds_avg, all_preds_std = [], []
-
-    for path in model_paths:
-        print(f"Loading {path}...")
-        model = tf.keras.models.load_model(path, compile=False)
-        preds_avg, preds_std = [], []
+    for _ in range(n_samples):
+        means = []
+        variances = []
 
         for images, _ in dataset:
-            preds = model.predict(images, verbose=0)
-            preds_avg.append(preds["apparent_age_avg"])
-            preds_std.append(preds["apparent_age_std"])
+            batch_means = []
+            batch_vars = []
 
-        all_preds_avg.append(np.concatenate(preds_avg))
-        all_preds_std.append(np.concatenate(preds_std))
+            for model in models:
+                preds = model(images, training=True)
+                mean = preds["apparent_age_avg"].numpy().flatten()
+                std = preds["apparent_age_std"].numpy().flatten()
+                var = np.square(std)
+                batch_means.append(mean)
+                batch_vars.append(var)
 
-    final_avg = np.mean(np.stack(all_preds_avg), axis=0)
-    final_std = np.mean(np.stack(all_preds_std), axis=0)
+            mean_avg = np.mean(batch_means, axis=0)
+            var_avg = np.mean(batch_vars, axis=0)
 
-    return final_avg, final_std
+            means.append(mean_avg)
+            variances.append(var_avg)
+
+        all_means.append(np.concatenate(means))
+        all_vars.append(np.concatenate(variances))
+
+    all_means = np.stack(all_means)
+    all_vars = np.stack(all_vars)
+
+    pred_mean = np.mean(all_means, axis=0)
+    aleatoric = np.mean(all_vars, axis=0)
+    epistemic = np.var(all_means, axis=0)
+    predictive = aleatoric + epistemic
+
+    return pred_mean, aleatoric, epistemic, predictive
 
 
-# ================= Visualization Functions =================
-# [Same as your current plotting functions — not repeated here for brevity]
-def plot_results(actual_ages, predicted_ages, predicted_stds):
-    plt.figure(figsize=(8, 8))
-    plt.errorbar(actual_ages, predicted_ages, yerr=predicted_stds, fmt='o', alpha=0.6, label="Predictions with Std Dev")
-    plt.plot([min(actual_ages), max(actual_ages)], [min(actual_ages), max(actual_ages)], 'r--', label="Perfect Prediction")
+# =================== Visualization ===================
+def plot_uncertainty_components(actual, predicted, aleatoric, epistemic, predictive):
+    plt.figure(figsize=(10, 6))
+    plt.scatter(actual, predicted, c='blue', label="Predicted Ages", alpha=0.6)
+    plt.errorbar(actual, predicted, yerr=np.sqrt(aleatoric), fmt='o', color='gray', alpha=0.3, label='Aleatoric Std')
+    plt.errorbar(actual, predicted, yerr=np.sqrt(epistemic), fmt='o', color='orange', alpha=0.3, label='Epistemic Std')
+    plt.plot([min(actual), max(actual)], [min(actual), max(actual)], 'r--', label="Perfect Prediction")
     plt.xlabel("Actual Age")
     plt.ylabel("Predicted Age")
-    plt.title("Predicted vs Actual Age with Uncertainty")
+    plt.title("Age Prediction with Disentangled Uncertainty")
     plt.legend()
     plt.grid(True)
+    plt.tight_layout()
     plt.show()
 
-def plot_residuals(actual_ages, predicted_ages):
-    residuals = np.array(predicted_ages) - np.array(actual_ages)
-    plt.figure(figsize=(8, 6))
-    plt.scatter(actual_ages, residuals, alpha=0.5)
-    plt.axhline(0, color='red', linestyle='--')
-    plt.xlabel("Actual Age")
-    plt.ylabel("Residual (Predicted - Actual)")
-    plt.title("Residual Plot")
-    plt.grid(True)
-    plt.show()
-
-def plot_residual_histogram(actual_ages, predicted_ages):
-    residuals = np.array(predicted_ages) - np.array(actual_ages)
-    plt.figure(figsize=(8, 6))
-    plt.hist(residuals, bins=50, color='purple', alpha=0.7)
-    plt.axvline(0, color='red', linestyle='--')
-    plt.xlabel("Residual")
-    plt.ylabel("Frequency")
-    plt.title("Histogram of Residuals")
-    plt.grid(True)
-    plt.show()
-
-def plot_binned_mse(actual_ages, predicted_ages, bin_size=10):
-    actual_ages = np.array(actual_ages)
-    predicted_ages = np.array(predicted_ages)
-    max_age = int(max(actual_ages)) + bin_size
-    bins = range(0, max_age, bin_size)
-    bin_centers = []
-    mse_per_bin = []
-
-    for start in bins:
-        end = start + bin_size
-        indices = (actual_ages >= start) & (actual_ages < end)
-        if np.sum(indices) > 0:
-            errors = predicted_ages[indices] - actual_ages[indices]
-            mse_per_bin.append(np.mean(errors ** 2))
-            bin_centers.append((start + end) / 2)
-
-    plt.figure(figsize=(8, 6))
-    plt.plot(bin_centers, mse_per_bin, marker='o')
-    plt.xlabel("Age Bin Center")
-    plt.ylabel("MSE")
-    plt.title("MSE by Age Bin")
-    plt.grid(True)
-    plt.show()
-
-def plot_heatmap(actual_ages, predicted_ages):
-    plt.figure(figsize=(8, 6))
-    plt.hist2d(actual_ages, predicted_ages, bins=50, cmap='plasma')
-    plt.colorbar(label='Count')
-    plt.plot([0, 100], [0, 100], 'w--')
-    plt.xlabel("Actual Age")
-    plt.ylabel("Predicted Age")
-    plt.title("2D Histogram: Actual vs Predicted")
-    plt.grid(True)
-    plt.show()
-
-def plot_calibration_curve(actual_ages, predicted_ages, num_bins=10):
-    predicted_ages = np.array(predicted_ages)
-    actual_ages = np.array(actual_ages)
-    bins = np.linspace(min(predicted_ages), max(predicted_ages), num_bins + 1)
-    bin_centers = []
-    avg_actual = []
-
-    for i in range(num_bins):
-        indices = (predicted_ages >= bins[i]) & (predicted_ages < bins[i+1])
-        if np.sum(indices) > 0:
-            bin_centers.append(np.mean(predicted_ages[indices]))
-            avg_actual.append(np.mean(actual_ages[indices]))
-
-    plt.figure(figsize=(8, 6))
-    plt.plot(bin_centers, avg_actual, 'o-', label='Model Calibration')
-    plt.plot([min(actual_ages), max(actual_ages)], [min(actual_ages), max(actual_ages)], 'r--', label='Perfect Calibration')
-    plt.xlabel("Predicted Age")
-    plt.ylabel("Average Actual Age")
-    plt.title("Calibration Curve")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
 
 # =================== Main Execution ===================
-test_data = load_test_data(TEST_DIR, TEST_CSV)
-print("✅ Test dataset loaded.")
+if __name__ == "__main__":
+    test_data = load_test_data(TEST_DIR, TEST_CSV)
+    print("✅ Test dataset loaded.")
 
-if USE_ENSEMBLE:
-    model_paths = [os.path.join(MODEL_BASE_PATH, f"ensemble_model_{i+1}.keras") for i in range(NUM_ENSEMBLE_MODELS)]
-    print("Running ensemble evaluation...")
-    predicted_ages, predicted_stds = load_ensemble_model_predictions(test_data, model_paths)
-    evaluate_with_dataloader(tf.keras.models.load_model(model_paths[0], compile=False), test_data)  # Only for plotting
-    export_predictions_to_csv(predicted_ages, predicted_stds, TEST_CSV, model_type="ensemble")
+    models = []
 
-else:
-    if USE_FLIPOUT:
-        MODEL_PATH = "age_estimation_model_two_phase_flipout.keras"
-        model_type = "flipout"
-    elif USE_DROPCONNECT:
-        MODEL_PATH = "age_estimation_model_two_phase_dropconnect.keras"
-        model_type = "dropconnect"
+    if USE_ENSEMBLE:
+        model_paths = [os.path.join(MODEL_BASE_PATH, f"ensemble_model_{i+1}.keras") for i in range(NUM_ENSEMBLE_MODELS)]
+        print(f"📦 Loading ensemble models...")
+        for path in model_paths:
+            model = tf.keras.models.load_model(path, compile=False)
+            models.append(model)
+        model_type = "ensemble"
     else:
-        MODEL_PATH = "age_estimation_model_two_phase.keras"
-        model_type = "default"
+        if USE_FLIPOUT:
+            MODEL_PATH = "age_estimation_model_two_phase_flipout.keras"
+            model_type = "flipout"
+        elif USE_DROPCONNECT:
+            MODEL_PATH = "age_estimation_model_two_phase_dropconnect.keras"
+            model_type = "dropconnect"
+        else:
+            MODEL_PATH = "age_estimation_model_two_phase.keras"
+            model_type = "default"
 
-    print(f"Loading model: {MODEL_PATH}")
-    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-    print("✅ Model loaded.")
+        print(f"📦 Loading model: {MODEL_PATH}")
+        model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+        models.append(model)
 
-    predicted_ages, predicted_stds = evaluate_with_dataloader(model, test_data, return_predictions=True)
-    export_predictions_to_csv(predicted_ages, predicted_stds, TEST_CSV, model_type=model_type)
+    print("\n🔁 Running Monte Carlo inference for uncertainty disentanglement...")
+    pred_mean, aleatoric, epistemic, predictive = mc_inference(models, test_data, n_samples=20)
+
+    df = pd.read_csv(TEST_CSV)
+    actual_ages = df["real_age"].astype(np.float32).values
+    min_len = min(len(pred_mean), len(actual_ages))
+
+    actual_ages = actual_ages[:min_len]
+    pred_mean = pred_mean[:min_len]
+    aleatoric = aleatoric[:min_len]
+    epistemic = epistemic[:min_len]
+    predictive = predictive[:min_len]
+
+    df = df.iloc[:min_len]
+    df["predicted_age"] = pred_mean
+    df["aleatoric_uncertainty"] = aleatoric
+    df["epistemic_uncertainty"] = epistemic
+    df["predictive_uncertainty"] = predictive
+
+    out_csv = f"predictions_disentangled_{model_type}.csv"
+    df.to_csv(out_csv, index=False)
+    print(f"\n📁 Predictions with disentangled uncertainty saved to: {out_csv}")
+
+    plot_uncertainty_components(actual_ages, pred_mean, aleatoric, epistemic, predictive)

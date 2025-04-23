@@ -24,13 +24,15 @@ USE_ENSAMBLE=False
 
 # ========== Load Data ==========
 # Training: repeat=True, shuffle=True
-train_loader = AgePredictionDataLoader(TRAIN_DIR, TRAIN_CSV, batch_size=32, num_samples=None, bins=None, visualize=True)
+train_loader = AgePredictionDataLoader(TRAIN_DIR, TRAIN_CSV, batch_size=32, data_fraction=.1, visualize=True)
 train_data = train_loader.get_dataset(shuffle=True, repeat=True)
 
 # Validation: repeat=False, shuffle=False
 valid_loader = AgePredictionDataLoader(VALID_DIR, VALID_CSV, batch_size=32, visualize=True)
 valid_data = valid_loader.get_dataset(shuffle=False, repeat=False)
 
+print("Train size:", train_loader.get_sample_count())
+print("Validation size:", valid_loader.get_sample_count())
 
 
 if USE_ENSAMBLE:
