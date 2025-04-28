@@ -114,8 +114,15 @@ class AgeEstimationModel(tf.keras.Model):
 
     # Two-phase training: Phase 1 - Single task (only average)
     def train_single_task(self, train_data, valid_data, epochs=10, train_steps=1000, valid_steps=200):
+            
+        if self.use_flipout:
+            new_optimizer = tf.keras.optimizers.Adam(learning_rate=5e-5)
+            new_patience = 10
+        else:
+            new_optimizer = 'adam'
+            new_patience = 5
         self.compile(
-            optimizer='adam',
+            optimizer=new_optimizer,
             loss={
                 "apparent_age_avg": 'mse',
                 "apparent_age_std": lambda y_true, y_pred: tf.reduce_mean(y_pred * 0)
@@ -126,7 +133,7 @@ class AgeEstimationModel(tf.keras.Model):
         early_stopping = tf.keras.callbacks.EarlyStopping(
             monitor='val_loss',
             mode='min',
-            patience=5,
+            patience=new_patience,
             restore_best_weights=True,
             verbose=1
         )
@@ -148,8 +155,10 @@ class AgeEstimationModel(tf.keras.Model):
         for layer in self.base_model.layers[-layers_to_unfreeze:]:
             layer.trainable = True
 
+        new_optimizer = tf.keras.optimizers.Adam(learning_rate=2e-4 if not self.use_flipout else 5e-5)
+
         self.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=2e-4),
+            optimizer=new_optimizer,
             loss={
                 "apparent_age_avg": 'mse',
                 "apparent_age_std": "mse"
@@ -162,7 +171,7 @@ class AgeEstimationModel(tf.keras.Model):
 
         early_stopping = tf.keras.callbacks.EarlyStopping(
             monitor='val_loss',
-            patience=7,
+            patience=7 if not self.use_flipout else 12,
             restore_best_weights=True,
             verbose=1
         )

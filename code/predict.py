@@ -9,14 +9,23 @@ from sklearn.metrics import r2_score
 
 # ================= Configuration =================
 USE_FLIPOUT = True
+
 USE_DROPCONNECT = False
 USE_ENSEMBLE = False  # Set to True to evaluate ensemble
 
 NUM_ENSEMBLE_MODELS = 5
 MODEL_BASE_PATH = "ensemble_models"  # Folder where ensemble models are saved
 
-TEST_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
-TEST_CSV = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_test.csv"
+
+
+use_laptop=False
+if use_laptop:
+    TEST_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
+    TEST_CSV = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_test.csv"
+else:
+    TEST_DIR = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
+    TEST_CSV = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_test.csv"
+
 MODEL_PATH = "age_estimation_model_two_phase.keras"  # Default single model path
 
 
@@ -49,14 +58,14 @@ def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
 
 
 # ================= Evaluation Functions =================
-def evaluate_with_dataloader(model, dataset, return_predictions=False):
+def evaluate_with_dataloader(model, dataset, return_predictions=False, training_mode=False):
     actual_ages, predicted_ages, actual_stds, predicted_stds, errors = [], [], [], [], []
 
     for images, labels in dataset:
-        preds = model.predict(images, verbose=0)
+        preds = model(images, training=training_mode)  # 👈 use training=True for Flipout
 
-        pred_avg = preds["apparent_age_avg"].flatten()
-        pred_std = preds["apparent_age_std"].flatten()
+        pred_avg = preds["apparent_age_avg"].numpy().flatten()
+        pred_std = preds["apparent_age_std"].numpy().flatten()
 
         actual_avg = labels["apparent_age_avg"].numpy().flatten()
         actual_std = labels["apparent_age_std"].numpy().flatten()
@@ -241,7 +250,7 @@ else:
 
     print(f"Loading model: {MODEL_PATH}")
     model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-    print("✅ Model loaded.")
+    print("Model loaded.")
 
-    predicted_ages, predicted_stds = evaluate_with_dataloader(model, test_data, return_predictions=True)
+    predicted_ages, predicted_stds = evaluate_with_dataloader(model, test_data, return_predictions=True, training_mode=USE_FLIPOUT)
     export_predictions_to_csv(predicted_ages, predicted_stds, TEST_CSV, model_type=model_type)
