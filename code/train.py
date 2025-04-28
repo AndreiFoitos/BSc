@@ -194,14 +194,14 @@ def train_and_save(model_type, fraction, model_index=None):
 
 
 # ========== Train Flipout & DropConnect ==========
-for fraction in DATA_FRACTIONS:
+"""for fraction in DATA_FRACTIONS:
     train_and_save("flipout", fraction)
-    train_and_save("dropconnect", fraction)
+    train_and_save("dropconnect", fraction)"""
 
 # ========== Train Ensembles (as standard models) ==========
-"""for fraction in DATA_FRACTIONS:
+for fraction in DATA_FRACTIONS:
     for i in range(NUM_ENSEMBLE_MODELS):
-        train_and_save("ensemble", fraction, model_index=i)"""
+        train_and_save("ensemble", fraction, model_index=i)
 
 
 def generate_training_report(log_dir=LOGS_DIR, output_path="training_summary.csv"):
