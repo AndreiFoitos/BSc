@@ -127,9 +127,4 @@ class AgePredictionDataLoader:
         return dataset
     
     def get_sample_count(self):
-<<<<<<< HEAD
         return len(self.labels_df)
-=======
-        return len(self.labels_df)
-
->>>>>>> 0dc6b61f45adf42a6546daaadf21c43ac71e0849

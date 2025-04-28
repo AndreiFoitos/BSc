@@ -29,7 +29,6 @@ else:
     VALID_CSV = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_valid.csv"
 
 BATCH_SIZE = 32
-VALID_STEPS = 46
 DROPOUT_RATE = 0.3
 
 DATA_FRACTIONS = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.00]

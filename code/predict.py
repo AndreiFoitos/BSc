@@ -1,43 +1,36 @@
-import tensorflow as tf
-import numpy as np
 import os
+import numpy as np
+import tensorflow as tf
 import matplotlib.pyplot as plt
+import seaborn as sns
 import pandas as pd
-from sklearn.metrics import r2_score
+from scipy.stats import pearsonr
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from tqdm import tqdm
+import random
 
-# ================= Configuration =================
-<<<<<<< HEAD
-USE_FLIPOUT = True
+from model import AgeEstimationModel
 
-USE_DROPCONNECT = False
-=======
-USE_FLIPOUT = False
-USE_DROPCONNECT = True
->>>>>>> 0dc6b61f45adf42a6546daaadf21c43ac71e0849
-USE_ENSEMBLE = False  # Set to True to evaluate ensemble
+# --- Seeding for Reproducibility ---
+SEED = 36
+np.random.seed(SEED)
+tf.random.set_seed(SEED)
+random.seed(SEED)
 
-NUM_ENSEMBLE_MODELS = 5
-MODEL_BASE_PATH = "ensemble_models"
+# --- Paths (Adjust if needed) ---
+MODELS_DIR = "trained_models_by_fraction"
+SAVE_RESULTS_DIR = "mc_dropout_results"
 
-<<<<<<< HEAD
+os.makedirs(SAVE_RESULTS_DIR, exist_ok=True)
 
+# --- Constants ---
+BATCH_SIZE = 32
+MC_SAMPLES = 20
 
-use_laptop=False
-if use_laptop:
-    TEST_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
-    TEST_CSV = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_test.csv"
-else:
-    TEST_DIR = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
-    TEST_CSV = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_test.csv"
-
-MODEL_PATH = "age_estimation_model_two_phase.keras"  # Default single model path
-
-=======
 TEST_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
 TEST_CSV = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_test.csv"
->>>>>>> 0dc6b61f45adf42a6546daaadf21c43ac71e0849
 
-# ================= Load Test Data =================
+# --- Load Test Data ---
 def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
     df = pd.read_csv(test_csv_path)
     df["face_file_name"] = df["file_name"].apply(lambda x: f"{x}_face.jpg")
@@ -64,187 +57,274 @@ def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
     dataset = dataset.batch(batch_size)
     return dataset
 
-
-<<<<<<< HEAD
-# ================= Evaluation Functions =================
-def evaluate_with_dataloader(model, dataset, return_predictions=False, training_mode=False):
-    actual_ages, predicted_ages, actual_stds, predicted_stds, errors = [], [], [], [], []
-
-    for images, labels in dataset:
-        preds = model(images, training=training_mode)  # 👈 use training=True for Flipout
-
-        pred_avg = preds["apparent_age_avg"].numpy().flatten()
-        pred_std = preds["apparent_age_std"].numpy().flatten()
-
-        actual_avg = labels["apparent_age_avg"].numpy().flatten()
-        actual_std = labels["apparent_age_std"].numpy().flatten()
-
-        errors.extend(np.abs(pred_avg - actual_avg))
-        actual_ages.extend(actual_avg)
-        predicted_ages.extend(pred_avg)
-        actual_stds.extend(actual_std)
-        predicted_stds.extend(pred_std)
-
-    mse = np.mean(np.square(errors))
-    rmse = np.sqrt(mse)
-    mae = np.mean(errors)
-    r2 = r2_score(actual_ages, predicted_ages)
-
-    print(f"\nEvaluation Results:")
-    print(f"MAE : {mae:.2f}")
-    print(f"MSE : {mse:.2f}")
-    print(f"RMSE: {rmse:.2f}")
-    print(f"R²  : {r2:.3f}")
-
-    plot_results(actual_ages, predicted_ages, predicted_stds)
-    plot_residuals(actual_ages, predicted_ages)
-    plot_residual_histogram(actual_ages, predicted_ages)
-    plot_binned_mse(actual_ages, predicted_ages)
-    plot_heatmap(actual_ages, predicted_ages)
-    plot_calibration_curve(actual_ages, predicted_ages)
-
-    if return_predictions:
-        return predicted_ages, predicted_stds
-
-
-def export_predictions_to_csv(predicted_ages, predicted_stds, original_csv_path, model_type="default"):
-    output_csv_path = f"predictions_{model_type}.csv"
-    df = pd.read_csv(original_csv_path)
-
-    min_len = min(len(predicted_ages), len(df))
-    df = df.iloc[:min_len]
-    df["predicted_age"] = predicted_ages[:min_len]
-    df["predicted_std"] = predicted_stds[:min_len]
-
-    df.to_csv(output_csv_path, index=False)
-    print(f"\nPredictions saved to {output_csv_path}")
-
-
-def load_ensemble_model_predictions(dataset, model_paths):
-    all_preds_avg, all_preds_std = [], []
-
-    for path in model_paths:
-        print(f"Loading {path}...")
-        model = tf.keras.models.load_model(path, compile=False)
-        preds_avg, preds_std = [], []
-=======
-# =================== MC Inference ===================
+# --- MC Dropout Inference ---
 def mc_inference(models, dataset, n_samples=20):
     all_means = []
     all_vars = []
+    all_model_stds = []
+    y_trues = []
 
     for _ in range(n_samples):
-        means = []
-        variances = []
->>>>>>> 0dc6b61f45adf42a6546daaadf21c43ac71e0849
+        sample_means = []
+        sample_vars = []
+        sample_stds = []
+        sample_trues = []
 
-        for images, _ in dataset:
+        for images, labels in dataset:
             batch_means = []
             batch_vars = []
+            batch_stds = []
 
             for model in models:
                 preds = model(images, training=True)
                 mean = preds["apparent_age_avg"].numpy().flatten()
                 std = preds["apparent_age_std"].numpy().flatten()
                 var = np.square(std)
+
                 batch_means.append(mean)
                 batch_vars.append(var)
+                batch_stds.append(std)
 
-            mean_avg = np.mean(batch_means, axis=0)
-            var_avg = np.mean(batch_vars, axis=0)
+            batch_mean_avg = np.mean(batch_means, axis=0)
+            batch_var_avg = np.mean(batch_vars, axis=0)
+            batch_std_avg = np.mean(batch_stds, axis=0)
 
-            means.append(mean_avg)
-            variances.append(var_avg)
+            sample_means.append(batch_mean_avg)
+            sample_vars.append(batch_var_avg)
+            sample_stds.append(batch_std_avg)
+            sample_trues.append(labels["apparent_age_avg"].numpy().flatten())
 
-        all_means.append(np.concatenate(means))
-        all_vars.append(np.concatenate(variances))
+        all_means.append(np.concatenate(sample_means))
+        all_vars.append(np.concatenate(sample_vars))
+        all_model_stds.append(np.concatenate(sample_stds))
 
-    all_means = np.stack(all_means)
-    all_vars = np.stack(all_vars)
+        if len(y_trues) == 0:
+            y_trues = np.concatenate(sample_trues)
+
+    all_means = np.stack(all_means, axis=0)
+    all_vars = np.stack(all_vars, axis=0)
+    all_model_stds = np.stack(all_model_stds, axis=0)
 
     pred_mean = np.mean(all_means, axis=0)
     aleatoric = np.mean(all_vars, axis=0)
     epistemic = np.var(all_means, axis=0)
     predictive = aleatoric + epistemic
+    pred_model_std = np.mean(all_model_stds, axis=0)
 
-    return pred_mean, aleatoric, epistemic, predictive
+    return pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_trues
 
+# --- Plotting Functions ---
+def plot_predictions(y_true, mean, std, save_path_prefix):
+    os.makedirs(os.path.dirname(save_path_prefix), exist_ok=True)
 
-# =================== Visualization ===================
-def plot_uncertainty_components(actual, predicted, aleatoric, epistemic, predictive):
-    plt.figure(figsize=(10, 6))
-    plt.scatter(actual, predicted, c='blue', label="Predicted Ages", alpha=0.6)
-    plt.errorbar(actual, predicted, yerr=np.sqrt(aleatoric), fmt='o', color='gray', alpha=0.3, label='Aleatoric Std')
-    plt.errorbar(actual, predicted, yerr=np.sqrt(epistemic), fmt='o', color='orange', alpha=0.3, label='Epistemic Std')
-    plt.plot([min(actual), max(actual)], [min(actual), max(actual)], 'r--', label="Perfect Prediction")
-    plt.xlabel("Actual Age")
+    plt.figure(figsize=(8, 6))
+    plt.errorbar(y_true, mean, yerr=std, fmt='o', ecolor='lightgray', alpha=0.6)
+    plt.plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], 'k--', lw=2)
+    plt.xlabel("True Age")
     plt.ylabel("Predicted Age")
-    plt.title("Age Prediction with Disentangled Uncertainty")
-    plt.legend()
+    plt.title("MC Dropout Predictions with Uncertainty")
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    plt.savefig(save_path_prefix + "_scatter.png")
+    plt.close()
+
+    abs_errors = np.abs(y_true - mean)
+    plt.figure(figsize=(8, 6))
+    plt.scatter(std, abs_errors, alpha=0.5)
+    plt.xlabel("Uncertainty (std)")
+    plt.ylabel("Absolute Error")
+    plt.title("Uncertainty vs Error")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(save_path_prefix + "_uncertainty_vs_error.png")
+    plt.close()
+
+    plt.figure(figsize=(8, 6))
+    plt.hist(std, bins=30, color="skyblue", edgecolor="black")
+    plt.xlabel("Uncertainty (std)")
+    plt.ylabel("Frequency")
+    plt.title("Distribution of Prediction Uncertainty")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(save_path_prefix + "_uncertainty_histogram.png")
+    plt.close()
+
+# --- Load Test Dataset Once ---
+print("🔵 Loading test dataset...")
+test_dataset = load_test_data(TEST_DIR, TEST_CSV, batch_size=BATCH_SIZE)
 
 
-# =================== Main Execution ===================
-if __name__ == "__main__":
-    test_data = load_test_data(TEST_DIR, TEST_CSV)
-    print("✅ Test dataset loaded.")
+# --- Main Inference Loop ---
+model_files = [f for f in os.listdir(MODELS_DIR) if f.endswith(".keras")]
 
-    models = []
+for model_file in tqdm(model_files, desc="Processing Models"):
+    model_path = os.path.join(MODELS_DIR, model_file)
+    model_name = model_file.replace(".keras", "")
 
-    if USE_ENSEMBLE:
-        model_paths = [os.path.join(MODEL_BASE_PATH, f"ensemble_model_{i+1}.keras") for i in range(NUM_ENSEMBLE_MODELS)]
-        print(f"📦 Loading ensemble models...")
-        for path in model_paths:
-            model = tf.keras.models.load_model(path, compile=False)
-            models.append(model)
-        model_type = "ensemble"
-    else:
-        if USE_FLIPOUT:
-            MODEL_PATH = "age_estimation_model_two_phase_flipout.keras"
-            model_type = "flipout"
-        elif USE_DROPCONNECT:
-            MODEL_PATH = "age_estimation_model_two_phase_dropconnect.keras"
-            model_type = "dropconnect"
-        else:
-            MODEL_PATH = "age_estimation_model_two_phase.keras"
-            model_type = "default"
+    print(f"🔵 Loading model: {model_name}")
+    model = tf.keras.models.load_model(model_path, compile=False)
 
-<<<<<<< HEAD
-    print(f"Loading model: {MODEL_PATH}")
-    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-    print("Model loaded.")
+    print(f"🔵 Running MC Dropout sampling for model: {model_name}")
+    pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_true = mc_inference(
+        [model],
+        test_dataset,
+        n_samples=MC_SAMPLES
+    )
 
-    predicted_ages, predicted_stds = evaluate_with_dataloader(model, test_data, return_predictions=True, training_mode=USE_FLIPOUT)
-    export_predictions_to_csv(predicted_ages, predicted_stds, TEST_CSV, model_type=model_type)
-=======
-        print(f"📦 Loading model: {MODEL_PATH}")
-        model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-        models.append(model)
+    save_path = os.path.join(SAVE_RESULTS_DIR, f"{model_name}_mc_predictions.csv")
+    df = pd.DataFrame({
+        "y_true": y_true,
+        "mean_prediction": pred_mean,
+        "aleatoric_uncertainty": aleatoric,
+        "epistemic_uncertainty": epistemic,
+        "predictive_uncertainty": predictive,
+        "model_predicted_std": pred_model_std
+    })
+    df.to_csv(save_path, index=False)
+    print(f"✅ Predictions for {model_name} saved to {save_path}")
 
-    print("\n🔁 Running Monte Carlo inference for uncertainty disentanglement...")
-    pred_mean, aleatoric, epistemic, predictive = mc_inference(models, test_data, n_samples=20)
+    plot_prefix = os.path.join(SAVE_RESULTS_DIR, model_name)
+    plot_predictions(y_true, pred_mean, pred_model_std, plot_prefix)
 
-    df = pd.read_csv(TEST_CSV)
-    actual_ages = df["real_age"].astype(np.float32).values
-    min_len = min(len(pred_mean), len(actual_ages))
+# --- Generate Inference Report ---
+def generate_inference_report(results_dir=SAVE_RESULTS_DIR, output_csv="mc_dropout_inference_summary.csv"):
+    rows = []
+    result_files = [f for f in os.listdir(results_dir) if f.endswith("_mc_predictions.csv")]
 
-    actual_ages = actual_ages[:min_len]
-    pred_mean = pred_mean[:min_len]
-    aleatoric = aleatoric[:min_len]
-    epistemic = epistemic[:min_len]
-    predictive = predictive[:min_len]
+    for file in result_files:
+        data = pd.read_csv(os.path.join(results_dir, file))
 
-    df = df.iloc[:min_len]
-    df["predicted_age"] = pred_mean
-    df["aleatoric_uncertainty"] = aleatoric
-    df["epistemic_uncertainty"] = epistemic
-    df["predictive_uncertainty"] = predictive
+        y_true = data['y_true'].values
+        mean_pred = data['mean_prediction'].values
+        std_pred = data['model_predicted_std'].values
 
-    out_csv = f"predictions_disentangled_{model_type}.csv"
-    df.to_csv(out_csv, index=False)
-    print(f"\n📁 Predictions with disentangled uncertainty saved to: {out_csv}")
+        mae = mean_absolute_error(y_true, mean_pred)
+        mse = mean_squared_error(y_true, mean_pred)
+        rmse = np.sqrt(mse)
+        r2 = r2_score(y_true, mean_pred)
+        mean_uncertainty = np.mean(std_pred)
 
-    plot_uncertainty_components(actual_ages, pred_mean, aleatoric, epistemic, predictive)
->>>>>>> 0dc6b61f45adf42a6546daaadf21c43ac71e0849
+        abs_errors = np.abs(y_true - mean_pred)
+        corr = pearsonr(abs_errors, std_pred)[0] if len(abs_errors) > 1 else np.nan
+
+        rows.append({
+            "model_name": file.replace("_mc_predictions.csv", ""),
+            "MAE": mae,
+            "MSE": mse,
+            "RMSE": rmse,
+            "R2_Score": r2,
+            "Mean_Uncertainty": mean_uncertainty,
+            "Uncertainty_Error_Correlation": corr
+        })
+
+    df = pd.DataFrame(rows)
+    df.sort_values("model_name", inplace=True)
+    output_path = os.path.join(results_dir, output_csv)
+    df.to_csv(output_path, index=False)
+    print(f"\n✅ Inference report saved to {output_path}")
+
+    plot_path = os.path.join(results_dir, "mae_vs_uncertainty.png")
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(data=df, x="Mean_Uncertainty", y="MAE", hue="model_name", palette="tab10", s=100)
+    plt.title("MAE vs Mean Uncertainty Across Models")
+    plt.xlabel("Mean Uncertainty (std)")
+    plt.ylabel("Mean Absolute Error (MAE)")
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(plot_path)
+    plt.close()
+    print(f"✅ MAE vs Uncertainty plot saved to {plot_path}")
+
+# --- Plot Calibration Curves ---
+def plot_calibration_curves(results_dir=SAVE_RESULTS_DIR):
+    result_files = [f for f in os.listdir(results_dir) if f.endswith("_mc_predictions.csv")]
+    plt.figure(figsize=(10, 8))
+
+    for file in result_files:
+        data = pd.read_csv(os.path.join(results_dir, file))
+
+        y_true = data['y_true'].values
+        mean_pred = data['mean_prediction'].values
+        std_pred = data['model_predicted_std'].values
+
+        abs_error = np.abs(mean_pred - y_true)
+
+        bins = np.percentile(std_pred, np.linspace(0, 100, 10))
+        bin_indices = np.digitize(std_pred, bins)
+
+        bin_uncertainty_means = []
+        bin_error_means = []
+
+        for b in range(1, len(bins)):
+            if np.any(bin_indices == b):
+                bin_uncertainty_means.append(std_pred[bin_indices == b].mean())
+                bin_error_means.append(abs_error[bin_indices == b].mean())
+
+        bin_uncertainty_means = np.array(bin_uncertainty_means)
+        bin_error_means = np.array(bin_error_means)
+        valid = ~np.isnan(bin_uncertainty_means) & ~np.isnan(bin_error_means)
+
+        model_name = file.replace("_mc_predictions.csv", "")
+        plt.plot(bin_uncertainty_means[valid], bin_error_means[valid], marker='o', label=model_name)
+
+    plt.plot([0, plt.xlim()[1]], [0, plt.xlim()[1]], 'k--', label='Perfect Calibration')
+    plt.xlabel('Predicted Uncertainty (std)')
+    plt.ylabel('Empirical Error (MAE)')
+    plt.title('Calibration Curves')
+    plt.grid(True)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "calibration_curves.png"))
+    plt.close()
+    print(f"✅ Calibration curves saved to {os.path.join(results_dir, 'calibration_curves.png')}")
+
+# --- Model Ranking ---
+def rank_models(results_dir=SAVE_RESULTS_DIR, input_csv="mc_dropout_inference_summary.csv", output_csv="model_ranking.csv", top_n=5):
+    df = pd.read_csv(os.path.join(results_dir, input_csv))
+
+    weights = {
+        'MAE': 0.4,
+        'RMSE': 0.3,
+        'R2_Score': -0.2,
+        'Mean_Uncertainty': 0.1,
+    }
+
+    for col in weights:
+        if col in df.columns:
+            min_val, max_val = df[col].min(), df[col].max()
+            df[f"{col}_norm"] = (df[col] - min_val) / (max_val - min_val) if (max_val - min_val) > 1e-6 else 0.0
+
+    df['composite_score'] = sum(weights[col] * df[f"{col}_norm"] for col in weights)
+
+    df.sort_values('composite_score', inplace=True)
+    df.to_csv(os.path.join(results_dir, output_csv), index=False)
+
+    print(f"\n✅ Model ranking saved to {os.path.join(results_dir, output_csv)}")
+    print("\n🏆 Top Models:")
+    print(df[['model_name', 'composite_score']].head(top_n))
+
+    return df
+
+def plot_model_rankings(ranked_df, results_dir=SAVE_RESULTS_DIR, plot_filename="model_ranking_plot.png"):
+    sns.set(style="whitegrid")
+    ranked_df = ranked_df.sort_values('composite_score')
+
+    plt.figure(figsize=(12, 6))
+    sns.barplot(x='composite_score', y='model_name', data=ranked_df, palette='viridis')
+
+    plt.title('Model Ranking Based on Composite Score', fontsize=16)
+    plt.xlabel('Composite Score (Lower is Better)', fontsize=14)
+    plt.ylabel('Model Name', fontsize=14)
+
+    plt.tight_layout()
+    save_path = os.path.join(results_dir, plot_filename)
+    plt.savefig(save_path)
+    plt.close()
+    print(f"✅ Model ranking plot saved to {save_path}")
+
+# --- RUN ---
+generate_inference_report()
+plot_calibration_curves()
+ranked_models = rank_models()
+plot_model_rankings(ranked_models)
