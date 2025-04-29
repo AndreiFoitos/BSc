@@ -54,57 +54,69 @@ def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
     }
 
     dataset = tf.data.Dataset.from_tensor_slices((images, labels))
-    dataset = dataset.batch(batch_size)
+    dataset = dataset.batch(batch_size, drop_remainder=False)
     return dataset
 
 # --- MC Dropout Inference ---
+# --- MC Dropout Inference with Progress Tracking --- 
 def mc_inference(models, dataset, n_samples=20):
     all_means = []
     all_vars = []
     all_model_stds = []
     y_trues = []
 
-    for _ in range(n_samples):
-        sample_means = []
-        sample_vars = []
-        sample_stds = []
-        sample_trues = []
+    # Progress bar for MC sampling
+    with tqdm(total=n_samples, desc="MC Sampling Passes") as mc_pbar:
+        for _ in range(n_samples):
+            sample_means = []
+            sample_vars = []
+            sample_stds = []
+            sample_trues = []
 
-        for images, labels in dataset:
-            batch_means = []
-            batch_vars = []
-            batch_stds = []
+            # Progress bar for dataset batches
+            with tqdm(total=61, desc="Batch Processing", leave=False) as batch_pbar:
+                for images, labels in dataset:
+                    batch_means = []
+                    batch_vars = []
+                    batch_stds = []
 
-            for model in models:
-                preds = model(images, training=True)
-                mean = preds["apparent_age_avg"].numpy().flatten()
-                std = preds["apparent_age_std"].numpy().flatten()
-                var = np.square(std)
+                    # Progress bar for models in each batch
+                    for model in models:
+                        preds = model(images, training=True)
+                        mean = preds["apparent_age_avg"].numpy().flatten()
+                        std = preds["apparent_age_std"].numpy().flatten()
+                        var = np.square(std)
 
-                batch_means.append(mean)
-                batch_vars.append(var)
-                batch_stds.append(std)
+                        batch_means.append(mean)
+                        batch_vars.append(var)
+                        batch_stds.append(std)
 
-            batch_mean_avg = np.mean(batch_means, axis=0)
-            batch_var_avg = np.mean(batch_vars, axis=0)
-            batch_std_avg = np.mean(batch_stds, axis=0)
+                    batch_mean_avg = np.mean(batch_means, axis=0)
+                    batch_var_avg = np.mean(batch_vars, axis=0)
+                    batch_std_avg = np.mean(batch_stds, axis=0)
 
-            sample_means.append(batch_mean_avg)
-            sample_vars.append(batch_var_avg)
-            sample_stds.append(batch_std_avg)
-            sample_trues.append(labels["apparent_age_avg"].numpy().flatten())
+                    sample_means.append(batch_mean_avg)
+                    sample_vars.append(batch_var_avg)
+                    sample_stds.append(batch_std_avg)
+                    sample_trues.append(labels["apparent_age_avg"].numpy().flatten())
 
-        all_means.append(np.concatenate(sample_means))
-        all_vars.append(np.concatenate(sample_vars))
-        all_model_stds.append(np.concatenate(sample_stds))
+                    batch_pbar.update(1)  # Update batch progress bar
 
-        if len(y_trues) == 0:
-            y_trues = np.concatenate(sample_trues)
+            all_means.append(np.concatenate(sample_means))
+            all_vars.append(np.concatenate(sample_vars))
+            all_model_stds.append(np.concatenate(sample_stds))
 
+            if len(y_trues) == 0:
+                y_trues = np.concatenate(sample_trues)
+
+            mc_pbar.update(1)  # Update MC sampling progress bar
+
+    # Stack the results from each MC sampling pass
     all_means = np.stack(all_means, axis=0)
     all_vars = np.stack(all_vars, axis=0)
     all_model_stds = np.stack(all_model_stds, axis=0)
 
+    # Compute final predictions and uncertainties
     pred_mean = np.mean(all_means, axis=0)
     aleatoric = np.mean(all_vars, axis=0)
     epistemic = np.var(all_means, axis=0)
@@ -112,6 +124,7 @@ def mc_inference(models, dataset, n_samples=20):
     pred_model_std = np.mean(all_model_stds, axis=0)
 
     return pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_trues
+
 
 # --- Plotting Functions ---
 def plot_predictions(y_true, mean, std, save_path_prefix):
@@ -150,41 +163,66 @@ def plot_predictions(y_true, mean, std, save_path_prefix):
     plt.close()
 
 # --- Load Test Dataset Once ---
-print("🔵 Loading test dataset...")
+print("Loading test dataset...")
 test_dataset = load_test_data(TEST_DIR, TEST_CSV, batch_size=BATCH_SIZE)
 
 
 # --- Main Inference Loop ---
+
+# Optional color codes for nicer terminal output (can remove if not wanted)
+BLUE = '\033[94m'
+GREEN = '\033[92m'
+YELLOW = '\033[93m'
+ENDC = '\033[0m'
+
 model_files = [f for f in os.listdir(MODELS_DIR) if f.endswith(".keras")]
 
-for model_file in tqdm(model_files, desc="Processing Models"):
+for model_file in model_files:
+
     model_path = os.path.join(MODELS_DIR, model_file)
     model_name = model_file.replace(".keras", "")
 
-    print(f"🔵 Loading model: {model_name}")
-    model = tf.keras.models.load_model(model_path, compile=False)
+    with tqdm(total=4, desc=f"🚀 {model_name}", leave=True) as pbar:
+        test_dataset = load_test_data(TEST_DIR, TEST_CSV, batch_size=BATCH_SIZE)
 
-    print(f"🔵 Running MC Dropout sampling for model: {model_name}")
-    pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_true = mc_inference(
-        [model],
-        test_dataset,
-        n_samples=MC_SAMPLES
-    )
+        print(f"\n{BLUE}🔵 [START] Processing model: {model_name}{ENDC}")
 
-    save_path = os.path.join(SAVE_RESULTS_DIR, f"{model_name}_mc_predictions.csv")
-    df = pd.DataFrame({
-        "y_true": y_true,
-        "mean_prediction": pred_mean,
-        "aleatoric_uncertainty": aleatoric,
-        "epistemic_uncertainty": epistemic,
-        "predictive_uncertainty": predictive,
-        "model_predicted_std": pred_model_std
-    })
-    df.to_csv(save_path, index=False)
-    print(f"✅ Predictions for {model_name} saved to {save_path}")
+        # Step 1: Load model
+        print(f"📦 Loading model: {model_name}")
+        model = tf.keras.models.load_model(model_path, compile=False)
+        pbar.update(1)
 
-    plot_prefix = os.path.join(SAVE_RESULTS_DIR, model_name)
-    plot_predictions(y_true, pred_mean, pred_model_std, plot_prefix)
+        # Step 2: Run MC Dropout inference
+        print(f"🛠️  Running MC Dropout inference for {model_name}...")
+        pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_true = mc_inference(
+            [model],
+            test_dataset,
+            n_samples=MC_SAMPLES
+        )
+        pbar.update(1)
+
+        # Step 3: Save predictions
+        save_path = os.path.join(SAVE_RESULTS_DIR, f"{model_name}_mc_predictions.csv")
+        df = pd.DataFrame({
+            "y_true": y_true,
+            "mean_prediction": pred_mean,
+            "aleatoric_uncertainty": aleatoric,
+            "epistemic_uncertainty": epistemic,
+            "predictive_uncertainty": predictive,
+            "model_predicted_std": pred_model_std
+        })
+        df.to_csv(save_path, index=False)
+        print(f"Predictions saved: {save_path}")
+        pbar.update(1)
+
+        # Step 4: Generate plots
+        plot_prefix = os.path.join(SAVE_RESULTS_DIR, model_name)
+        print(f"Generating plots for {model_name}...")
+        plot_predictions(y_true, pred_mean, pred_model_std, plot_prefix)
+        pbar.update(1)
+
+        print(f"{GREEN} [DONE] Finished processing {model_name}{ENDC}\n" + "-"*60)
+
 
 # --- Generate Inference Report ---
 def generate_inference_report(results_dir=SAVE_RESULTS_DIR, output_csv="mc_dropout_inference_summary.csv"):
@@ -221,7 +259,7 @@ def generate_inference_report(results_dir=SAVE_RESULTS_DIR, output_csv="mc_dropo
     df.sort_values("model_name", inplace=True)
     output_path = os.path.join(results_dir, output_csv)
     df.to_csv(output_path, index=False)
-    print(f"\n✅ Inference report saved to {output_path}")
+    print(f"\nInference report saved to {output_path}")
 
     plot_path = os.path.join(results_dir, "mae_vs_uncertainty.png")
     plt.figure(figsize=(10, 6))
@@ -234,7 +272,7 @@ def generate_inference_report(results_dir=SAVE_RESULTS_DIR, output_csv="mc_dropo
     plt.tight_layout()
     plt.savefig(plot_path)
     plt.close()
-    print(f"✅ MAE vs Uncertainty plot saved to {plot_path}")
+    print(f"MAE vs Uncertainty plot saved to {plot_path}")
 
 # --- Plot Calibration Curves ---
 def plot_calibration_curves(results_dir=SAVE_RESULTS_DIR):
@@ -277,7 +315,7 @@ def plot_calibration_curves(results_dir=SAVE_RESULTS_DIR):
     plt.tight_layout()
     plt.savefig(os.path.join(results_dir, "calibration_curves.png"))
     plt.close()
-    print(f"✅ Calibration curves saved to {os.path.join(results_dir, 'calibration_curves.png')}")
+    print(f"Calibration curves saved to {os.path.join(results_dir, 'calibration_curves.png')}")
 
 # --- Model Ranking ---
 def rank_models(results_dir=SAVE_RESULTS_DIR, input_csv="mc_dropout_inference_summary.csv", output_csv="model_ranking.csv", top_n=5):
@@ -300,7 +338,7 @@ def rank_models(results_dir=SAVE_RESULTS_DIR, input_csv="mc_dropout_inference_su
     df.sort_values('composite_score', inplace=True)
     df.to_csv(os.path.join(results_dir, output_csv), index=False)
 
-    print(f"\n✅ Model ranking saved to {os.path.join(results_dir, output_csv)}")
+    print(f"\n Model ranking saved to {os.path.join(results_dir, output_csv)}")
     print("\n🏆 Top Models:")
     print(df[['model_name', 'composite_score']].head(top_n))
 
@@ -321,7 +359,7 @@ def plot_model_rankings(ranked_df, results_dir=SAVE_RESULTS_DIR, plot_filename="
     save_path = os.path.join(results_dir, plot_filename)
     plt.savefig(save_path)
     plt.close()
-    print(f"✅ Model ranking plot saved to {save_path}")
+    print(f"Model ranking plot saved to {save_path}")
 
 # --- RUN ---
 generate_inference_report()
