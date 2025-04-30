@@ -15,8 +15,8 @@ random.seed(SEED)
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
 
-# Constants
-use_laptop=False
+
+use_laptop=True
 if use_laptop:
     TRAIN_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/train"
     VALID_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/valid"
@@ -31,7 +31,7 @@ else:
 BATCH_SIZE = 32
 DROPOUT_RATE = 0.3
 
-DATA_FRACTIONS = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.00]
+DATA_FRACTIONS = [0.25, 0.5, 0.75, 1.00]
 NUM_ENSEMBLE_MODELS = 5
 
 OUTPUT_DIR = "trained_models_by_fraction"
@@ -192,15 +192,14 @@ def train_and_save(model_type, fraction, model_index=None):
     print(f"Saved model: {file_name}")
 
 
-# ========== Train Flipout & DropConnect ==========
-"""for fraction in DATA_FRACTIONS:
-    train_and_save("flipout", fraction)
-    train_and_save("dropconnect", fraction)"""
 
-# ========== Train Ensembles (as standard models) ==========
 for fraction in DATA_FRACTIONS:
+    train_and_save("flipout", fraction)
+
+
+"""for fraction in DATA_FRACTIONS:
     for i in range(NUM_ENSEMBLE_MODELS):
-        train_and_save("ensemble", fraction, model_index=i)
+        train_and_save("ensemble", fraction, model_index=i)"""
 
 
 def generate_training_report(log_dir=LOGS_DIR, output_path="training_summary.csv"):

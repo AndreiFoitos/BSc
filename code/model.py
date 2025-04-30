@@ -14,7 +14,6 @@ class DropConnectDense(Dense):
     def call(self, inputs, training=False):
         kernel = self.kernel
         if training and self.dropconnect_rate > 0:
-            # Apply DropConnect to kernel
             random_tensor = tf.nn.dropout(tf.ones_like(kernel), rate=self.dropconnect_rate)
             kernel = tf.multiply(kernel, random_tensor)
         output = tf.matmul(inputs, kernel)
@@ -49,9 +48,14 @@ class AgeEstimationModel(tf.keras.Model):
         self.dense2 = self.get_dense_layer(256)
         self.batch_norm2 = BatchNormalization()
         self.relu2 = LeakyReLU(alpha=0.1)
+        
+        if self.use_flipout:
+            self.age_avg_head = tfpl.DenseFlipout(128, activation='relu')
+            self.age_std_head = tfpl.DenseFlipout(128, activation='relu')
+        else:
+            self.age_avg_head = Dense(128, activation='relu')
+            self.age_std_head = Dense(128, activation='relu')
 
-        self.age_avg_head = Dense(128, activation='relu')
-        self.age_std_head = Dense(128, activation='relu')
 
         self.dropout = Dropout(dropout_rate)
 
@@ -60,9 +64,7 @@ class AgeEstimationModel(tf.keras.Model):
 
 
     def get_dense_layer(self, units):
-        if self.use_flipout:
-            return tfpl.DenseFlipout(units, activation=None)
-        elif self.use_dropconnect:
+        if self.use_dropconnect:
             return DropConnectDense(units, dropconnect_rate=self.dropconnect_rate, activation=None)
         else:
             kernel_regularizer = regularizers.l2(1e-4)
@@ -112,7 +114,6 @@ class AgeEstimationModel(tf.keras.Model):
             name=config.get('name', None)
         )
 
-    # Two-phase training: Phase 1 - Single task (only average)
     def train_single_task(self, train_data, valid_data, epochs=10, train_steps=1000, valid_steps=200):
             
         if self.use_flipout:
@@ -149,7 +150,6 @@ class AgeEstimationModel(tf.keras.Model):
         )
         return history
 
-    # Phase 2: Multitask loss (avg + std)
     def train_multitask(self, train_data, valid_data, epochs=10, train_steps=1000, valid_steps=200):
         layers_to_unfreeze = 100
         for layer in self.base_model.layers[-layers_to_unfreeze:]:
@@ -188,12 +188,10 @@ class AgeEstimationModel(tf.keras.Model):
         return history
 
     def fine_tune(self, train_data, valid_data, epochs=5, train_steps=1000, valid_steps=200):
-        # Unfreeze the last N layers of the DenseNet base model for fine-tuning
         layers_to_unfreeze = 200
         for layer in self.base_model.layers[-layers_to_unfreeze:]:
             layer.trainable = True
 
-        # Re-compile with a smaller learning rate for fine-tuning
         self.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
             loss={
@@ -206,7 +204,6 @@ class AgeEstimationModel(tf.keras.Model):
             }
         )
 
-        # Train the model with fine-tuning
         early_stopping = EarlyStopping(
             monitor='val_loss',
             patience=10,

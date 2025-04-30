@@ -8,6 +8,7 @@ from scipy.stats import pearsonr
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from tqdm import tqdm
 import random
+import re
 
 from model import AgeEstimationModel
 
@@ -57,15 +58,12 @@ def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
     dataset = dataset.batch(batch_size, drop_remainder=False)
     return dataset
 
-# --- MC Dropout Inference ---
-# --- MC Dropout Inference with Progress Tracking --- 
 def mc_inference(models, dataset, n_samples=20):
     all_means = []
     all_vars = []
     all_model_stds = []
     y_trues = []
 
-    # Progress bar for MC sampling
     with tqdm(total=n_samples, desc="MC Sampling Passes") as mc_pbar:
         for _ in range(n_samples):
             sample_means = []
@@ -73,14 +71,12 @@ def mc_inference(models, dataset, n_samples=20):
             sample_stds = []
             sample_trues = []
 
-            # Progress bar for dataset batches
             with tqdm(total=61, desc="Batch Processing", leave=False) as batch_pbar:
                 for images, labels in dataset:
                     batch_means = []
                     batch_vars = []
                     batch_stds = []
 
-                    # Progress bar for models in each batch
                     for model in models:
                         preds = model(images, training=True)
                         mean = preds["apparent_age_avg"].numpy().flatten()
@@ -100,7 +96,7 @@ def mc_inference(models, dataset, n_samples=20):
                     sample_stds.append(batch_std_avg)
                     sample_trues.append(labels["apparent_age_avg"].numpy().flatten())
 
-                    batch_pbar.update(1)  # Update batch progress bar
+                    batch_pbar.update(1)
 
             all_means.append(np.concatenate(sample_means))
             all_vars.append(np.concatenate(sample_vars))
@@ -109,14 +105,12 @@ def mc_inference(models, dataset, n_samples=20):
             if len(y_trues) == 0:
                 y_trues = np.concatenate(sample_trues)
 
-            mc_pbar.update(1)  # Update MC sampling progress bar
+            mc_pbar.update(1)
 
-    # Stack the results from each MC sampling pass
     all_means = np.stack(all_means, axis=0)
     all_vars = np.stack(all_vars, axis=0)
     all_model_stds = np.stack(all_model_stds, axis=0)
 
-    # Compute final predictions and uncertainties
     pred_mean = np.mean(all_means, axis=0)
     aleatoric = np.mean(all_vars, axis=0)
     epistemic = np.var(all_means, axis=0)
@@ -126,7 +120,6 @@ def mc_inference(models, dataset, n_samples=20):
     return pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_trues
 
 
-# --- Plotting Functions ---
 def plot_predictions(y_true, mean, std, save_path_prefix):
     os.makedirs(os.path.dirname(save_path_prefix), exist_ok=True)
 
@@ -162,12 +155,12 @@ def plot_predictions(y_true, mean, std, save_path_prefix):
     plt.savefig(save_path_prefix + "_uncertainty_histogram.png")
     plt.close()
 
-# --- Load Test Dataset Once ---
+
 print("Loading test dataset...")
 test_dataset = load_test_data(TEST_DIR, TEST_CSV, batch_size=BATCH_SIZE)
 
 
-# --- Main Inference Loop ---
+
 
 # Optional color codes for nicer terminal output (can remove if not wanted)
 BLUE = '\033[94m'
@@ -185,15 +178,14 @@ for model_file in model_files:
     with tqdm(total=4, desc=f"🚀 {model_name}", leave=True) as pbar:
         test_dataset = load_test_data(TEST_DIR, TEST_CSV, batch_size=BATCH_SIZE)
 
-        print(f"\n{BLUE}🔵 [START] Processing model: {model_name}{ENDC}")
+        print(f"\n{BLUE}[START] Processing model: {model_name}{ENDC}")
 
-        # Step 1: Load model
-        print(f"📦 Loading model: {model_name}")
+        print(f"Loading model: {model_name}")
         model = tf.keras.models.load_model(model_path, compile=False)
         pbar.update(1)
 
-        # Step 2: Run MC Dropout inference
-        print(f"🛠️  Running MC Dropout inference for {model_name}...")
+
+        print(f" Running MC Dropout inference for {model_name}...")
         pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_true = mc_inference(
             [model],
             test_dataset,
@@ -201,7 +193,6 @@ for model_file in model_files:
         )
         pbar.update(1)
 
-        # Step 3: Save predictions
         save_path = os.path.join(SAVE_RESULTS_DIR, f"{model_name}_mc_predictions.csv")
         df = pd.DataFrame({
             "y_true": y_true,
@@ -215,7 +206,6 @@ for model_file in model_files:
         print(f"Predictions saved: {save_path}")
         pbar.update(1)
 
-        # Step 4: Generate plots
         plot_prefix = os.path.join(SAVE_RESULTS_DIR, model_name)
         print(f"Generating plots for {model_name}...")
         plot_predictions(y_true, pred_mean, pred_model_std, plot_prefix)
@@ -224,7 +214,35 @@ for model_file in model_files:
         print(f"{GREEN} [DONE] Finished processing {model_name}{ENDC}\n" + "-"*60)
 
 
-# --- Generate Inference Report ---
+
+
+def get_marker_and_color(model_name):
+
+    if "dropconnect" in model_name.lower():
+        marker = "s"  
+    elif "flipout" in model_name.lower():
+        marker = "o"  
+    else:
+        marker = "x"  
+
+    color_map = {
+        1: "red",       
+        5: "blue",      
+        10: "green",    
+        25: "orange",   
+        50: "purple",   
+        75: "yellow",   
+        100: "pink"     
+    }
+    match = re.search(r'(\d+)', model_name)
+
+    percent = int(match.group(1))
+
+    color = color_map.get(percent, "gray")
+    return marker, color
+
+
+
 def generate_inference_report(results_dir=SAVE_RESULTS_DIR, output_csv="mc_dropout_inference_summary.csv"):
     rows = []
     result_files = [f for f in os.listdir(results_dir) if f.endswith("_mc_predictions.csv")]
@@ -263,18 +281,27 @@ def generate_inference_report(results_dir=SAVE_RESULTS_DIR, output_csv="mc_dropo
 
     plot_path = os.path.join(results_dir, "mae_vs_uncertainty.png")
     plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df, x="Mean_Uncertainty", y="MAE", hue="model_name", palette="tab10", s=100)
+    for _, row in df.iterrows():
+        model_name = row["model_name"]
+        x = row["Mean_Uncertainty"]
+        y = row["MAE"]
+        marker, color = get_marker_and_color(model_name)
+        plt.scatter(x, y, marker=marker, color=color, s=100, label=model_name)
+
+    handles, labels = plt.gca().get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
+
     plt.title("MAE vs Mean Uncertainty Across Models")
     plt.xlabel("Mean Uncertainty (std)")
     plt.ylabel("Mean Absolute Error (MAE)")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(plot_path)
     plt.close()
     print(f"MAE vs Uncertainty plot saved to {plot_path}")
 
-# --- Plot Calibration Curves ---
+
 def plot_calibration_curves(results_dir=SAVE_RESULTS_DIR):
     result_files = [f for f in os.listdir(results_dir) if f.endswith("_mc_predictions.csv")]
     plt.figure(figsize=(10, 8))
@@ -304,7 +331,14 @@ def plot_calibration_curves(results_dir=SAVE_RESULTS_DIR):
         valid = ~np.isnan(bin_uncertainty_means) & ~np.isnan(bin_error_means)
 
         model_name = file.replace("_mc_predictions.csv", "")
-        plt.plot(bin_uncertainty_means[valid], bin_error_means[valid], marker='o', label=model_name)
+        marker, color = get_marker_and_color(model_name)
+        plt.plot(
+            bin_uncertainty_means[valid],
+            bin_error_means[valid],
+            marker=marker,
+            color=color,
+            label=model_name
+        )
 
     plt.plot([0, plt.xlim()[1]], [0, plt.xlim()[1]], 'k--', label='Perfect Calibration')
     plt.xlabel('Predicted Uncertainty (std)')
@@ -317,7 +351,7 @@ def plot_calibration_curves(results_dir=SAVE_RESULTS_DIR):
     plt.close()
     print(f"Calibration curves saved to {os.path.join(results_dir, 'calibration_curves.png')}")
 
-# --- Model Ranking ---
+
 def rank_models(results_dir=SAVE_RESULTS_DIR, input_csv="mc_dropout_inference_summary.csv", output_csv="model_ranking.csv", top_n=5):
     df = pd.read_csv(os.path.join(results_dir, input_csv))
 
@@ -339,10 +373,11 @@ def rank_models(results_dir=SAVE_RESULTS_DIR, input_csv="mc_dropout_inference_su
     df.to_csv(os.path.join(results_dir, output_csv), index=False)
 
     print(f"\n Model ranking saved to {os.path.join(results_dir, output_csv)}")
-    print("\n🏆 Top Models:")
+    print("\nTop Models:")
     print(df[['model_name', 'composite_score']].head(top_n))
 
     return df
+
 
 def plot_model_rankings(ranked_df, results_dir=SAVE_RESULTS_DIR, plot_filename="model_ranking_plot.png"):
     sns.set(style="whitegrid")
@@ -361,7 +396,7 @@ def plot_model_rankings(ranked_df, results_dir=SAVE_RESULTS_DIR, plot_filename="
     plt.close()
     print(f"Model ranking plot saved to {save_path}")
 
-# --- RUN ---
+
 generate_inference_report()
 plot_calibration_curves()
 ranked_models = rank_models()
