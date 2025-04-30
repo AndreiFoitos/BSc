@@ -28,8 +28,9 @@ os.makedirs(SAVE_RESULTS_DIR, exist_ok=True)
 BATCH_SIZE = 32
 MC_SAMPLES = 20
 
-TEST_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
-TEST_CSV = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_test.csv"
+
+TEST_DIR = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
+TEST_CSV = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_test.csv"
 
 # --- Load Test Data ---
 def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
@@ -168,7 +169,8 @@ GREEN = '\033[92m'
 YELLOW = '\033[93m'
 ENDC = '\033[0m'
 
-model_files = [f for f in os.listdir(MODELS_DIR) if f.endswith(".keras")]
+model_files = [f for f in os.listdir(MODELS_DIR) if f.endswith(".keras") and "flipout" in f.lower()]
+
 
 for model_file in model_files:
 
