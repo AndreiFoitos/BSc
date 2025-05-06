@@ -29,8 +29,8 @@ BATCH_SIZE = 32
 MC_SAMPLES = 20
 
 
-TEST_DIR = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
-TEST_CSV = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_test.csv"
+TEST_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
+TEST_CSV = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_test.csv"
 
 # --- Load Test Data ---
 def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
@@ -40,7 +40,7 @@ def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
     df = df[df["face_path"].apply(os.path.exists)].reset_index(drop=True)
 
     image_paths = df["face_path"].tolist()
-    apparent_age_avg = df["real_age"].astype(np.float32).values
+    apparent_age_avg = df["apparent_age_avg"].astype(np.float32).values
     apparent_age_std = df["apparent_age_std"].astype(np.float32).values
 
     def load_and_preprocess_image(path):
@@ -171,6 +171,7 @@ ENDC = '\033[0m'
 
 model_files = [f for f in os.listdir(MODELS_DIR) if f.endswith(".keras") and "flipout" in f.lower()]
 
+print(model_files)
 
 for model_file in model_files:
 

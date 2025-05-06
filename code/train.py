@@ -31,8 +31,8 @@ else:
 BATCH_SIZE = 32
 DROPOUT_RATE = 0.3
 
-DATA_FRACTIONS = [0.25, 0.5, 0.75, 1.00]
-NUM_ENSEMBLE_MODELS = 5
+DATA_FRACTIONS = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.00]
+NUM_ENSEMBLE_MODELS = 3
 
 OUTPUT_DIR = "trained_models_by_fraction"
 PLOTS_DIR = "training_plots"
@@ -193,13 +193,14 @@ def train_and_save(model_type, fraction, model_index=None):
 
 
 
-for fraction in DATA_FRACTIONS:
-    train_and_save("flipout", fraction)
-
-
 """for fraction in DATA_FRACTIONS:
+    train_and_save("dropconnect", fraction)
+    train_and_save("flipout", fraction)"""
+
+
+for fraction in DATA_FRACTIONS:
     for i in range(NUM_ENSEMBLE_MODELS):
-        train_and_save("ensemble", fraction, model_index=i)"""
+        train_and_save("ensemble", fraction, model_index=i)
 
 
 def generate_training_report(log_dir=LOGS_DIR, output_path="training_summary.csv"):
