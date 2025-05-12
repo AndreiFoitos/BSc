@@ -17,6 +17,10 @@ np.random.seed(SEED)
 tf.random.set_seed(SEED)
 random.seed(SEED)
 
+# Optional: Force eager execution for better debugging
+tf.config.run_functions_eagerly(True)
+print("Eager execution:", tf.executing_eagerly())
+
 # --- Constants & Paths ---
 MODELS_DIR = "trained_models_by_fraction"
 SAVE_RESULTS_DIR = "mc_dropout_results"
@@ -61,8 +65,9 @@ def mc_inference(models, dataset, n_samples=20):
     all_model_stds = []
     y_trues = []
 
-    with tqdm(total=n_samples, desc="MC Sampling Passes") as mc_pbar:
-        for _ in range(n_samples):
+    with tqdm(total=n_samples, desc="MC Sampling Passes", dynamic_ncols=True) as mc_pbar:
+        for i in range(n_samples):
+            print(f"Running MC sample {i+1}/{n_samples}")
             sample_means = []
             sample_vars = []
             sample_stds = []
@@ -100,6 +105,7 @@ def mc_inference(models, dataset, n_samples=20):
                 y_trues = np.concatenate(sample_trues)
 
             mc_pbar.update(1)
+            mc_pbar.refresh()  # Force update
 
     all_means = np.stack(all_means, axis=0)
     all_vars = np.stack(all_vars, axis=0)

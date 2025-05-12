@@ -3,20 +3,20 @@ import re
 import pandas as pd
 import matplotlib.pyplot as plt
 
-
 INPUT_DIR = "mc_dropout_results"
 OUTPUT_DIR = "compare"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def extract_model_info(filename):
-    match = re.match(r'(flipout|dropconnect)(\d+)percent_mc_predictions\.csv', filename)
+    match = re.match(r'(flipout|dropconnect|ensemble)(\d+)percent_mc_predictions\.csv', filename)
     if match:
         model_type, percentage = match.groups()
         return model_type, int(percentage)
     return None, None
 
+# Include ensemble
+data_by_model = {'flipout': [], 'dropconnect': [], 'ensemble': []}
 
-data_by_model = {'flipout': [], 'dropconnect': []}
 for file in os.listdir(INPUT_DIR):
     if file.endswith("_mc_predictions.csv"):
         model_type, percent = extract_model_info(file)
@@ -34,7 +34,6 @@ for file in os.listdir(INPUT_DIR):
                 "predictive": avg_predictive,
                 "model_std": avg_model_std
             })
-
 
 def plot_uncertainty_vs_true_age(input_dir=INPUT_DIR, output_dir=OUTPUT_DIR):
     result_files = [f for f in os.listdir(input_dir) if f.endswith("_mc_predictions.csv")]
@@ -67,9 +66,7 @@ def plot_uncertainty_vs_true_age(input_dir=INPUT_DIR, output_dir=OUTPUT_DIR):
         plt.close()
         print(f"Saved: {save_path}")
 
-
 fixed_ticks = [1, 5, 10, 25, 50, 75, 100]
-
 
 plot_uncertainty_vs_true_age()
 

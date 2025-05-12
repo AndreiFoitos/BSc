@@ -156,47 +156,39 @@ def plot_predictions(y_true, mean, std, save_path_prefix):
     plt.savefig(save_path_prefix + "_uncertainty_histogram.png")
     plt.close()
 
+def run_ensemble_inference():
+    print("Loading test dataset...")
+    test_dataset = load_test_data(TEST_DIR, TEST_CSV, batch_size=BATCH_SIZE)
 
-print("Loading test dataset...")
-test_dataset = load_test_data(TEST_DIR, TEST_CSV, batch_size=BATCH_SIZE)
+    model_files = sorted([f for f in os.listdir(MODELS_DIR) if f.endswith(".keras")])
+    ensemble_dict = {}
 
+    for file in model_files:
+        match = re.match(r"(ensemble\d+percent)_model\d+\.keras", file)
+        if match:
+            ensemble_name = match.group(1)
+            ensemble_dict.setdefault(ensemble_name, []).append(file)
 
+    excluded_ensembles = {"ensemble1percent", "ensemble10percent"}
 
+    print(ensemble_dict)
 
-# Optional color codes for nicer terminal output (can remove if not wanted)
-BLUE = '\033[94m'
-GREEN = '\033[92m'
-YELLOW = '\033[93m'
-ENDC = '\033[0m'
+    for ensemble_name, model_list in ensemble_dict.items():
+        if ensemble_name in excluded_ensembles:
+            print(f"Skipping excluded ensemble: {ensemble_name}")
+            continue
 
-model_files = [f for f in os.listdir(MODELS_DIR) if f.endswith(".keras") and "flipout" in f.lower()]
+        print(f"\nProcessing ensemble: {ensemble_name} with {len(model_list)} models")
+        models = [
+            tf.keras.models.load_model(os.path.join(MODELS_DIR, f), compile=False)
+            for f in model_list
+        ]
 
-print(model_files)
-
-for model_file in model_files:
-
-    model_path = os.path.join(MODELS_DIR, model_file)
-    model_name = model_file.replace(".keras", "")
-
-    with tqdm(total=4, desc=f"🚀 {model_name}", leave=True) as pbar:
-        test_dataset = load_test_data(TEST_DIR, TEST_CSV, batch_size=BATCH_SIZE)
-
-        print(f"\n{BLUE}[START] Processing model: {model_name}{ENDC}")
-
-        print(f"Loading model: {model_name}")
-        model = tf.keras.models.load_model(model_path, compile=False)
-        pbar.update(1)
-
-
-        print(f" Running MC Dropout inference for {model_name}...")
         pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_true = mc_inference(
-            [model],
-            test_dataset,
-            n_samples=MC_SAMPLES
+            models, test_dataset, n_samples=MC_SAMPLES
         )
-        pbar.update(1)
 
-        save_path = os.path.join(SAVE_RESULTS_DIR, f"{model_name}_mc_predictions.csv")
+        save_path = os.path.join(SAVE_RESULTS_DIR, f"{ensemble_name}_mc_predictions.csv")
         df = pd.DataFrame({
             "y_true": y_true,
             "mean_prediction": pred_mean,
@@ -206,18 +198,10 @@ for model_file in model_files:
             "model_predicted_std": pred_model_std
         })
         df.to_csv(save_path, index=False)
-        print(f"Predictions saved: {save_path}")
-        pbar.update(1)
+        print(f"Saved results: {save_path}")
 
-        plot_prefix = os.path.join(SAVE_RESULTS_DIR, model_name)
-        print(f"Generating plots for {model_name}...")
+        plot_prefix = os.path.join(SAVE_RESULTS_DIR, ensemble_name)
         plot_predictions(y_true, pred_mean, pred_model_std, plot_prefix)
-        pbar.update(1)
-
-        print(f"{GREEN} [DONE] Finished processing {model_name}{ENDC}\n" + "-"*60)
-
-
-
 
 def get_marker_and_color(model_name):
 
@@ -399,7 +383,7 @@ def plot_model_rankings(ranked_df, results_dir=SAVE_RESULTS_DIR, plot_filename="
     plt.close()
     print(f"Model ranking plot saved to {save_path}")
 
-
+run_ensemble_inference()
 generate_inference_report()
 plot_calibration_curves()
 ranked_models = rank_models()
