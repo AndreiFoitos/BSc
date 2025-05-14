@@ -193,9 +193,9 @@ def train_and_save(model_type, fraction, model_index=None):
 
 
 
-"""for fraction in DATA_FRACTIONS:
+for fraction in DATA_FRACTIONS:
     train_and_save("dropconnect", fraction)
-    train_and_save("flipout", fraction)"""
+    train_and_save("flipout", fraction)
 
 
 for fraction in DATA_FRACTIONS:
@@ -204,7 +204,6 @@ for fraction in DATA_FRACTIONS:
         if fraction == 0.25 and i == 0:
             continue
         train_and_save("ensemble", fraction, model_index=i)
-
 
 
 def generate_training_report(log_dir=LOGS_DIR, output_path="training_summary.csv"):

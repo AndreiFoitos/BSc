@@ -1,15 +1,22 @@
 model_name,Mean_Relative_Accuracy (%)
+ensemble100percent,71.43196485606735
+ensemble75percent,70.18451455676296
 dropconnect100percent,70.12281724679436
 dropconnect75percent,69.6459901350494
 flipout75percent,69.12679062818736
+ensemble50percent,68.554410394452
 dropconnect50percent,68.49073564150771
 flipout100percent,68.30888252376204
+ensemble25percent,67.22634769626355
 dropconnect25percent,66.51312935902205
 flipout50percent,66.37621041602544
+ensemble10percent,65.62184324805347
 dropconnect10percent,65.41411633476056
 flipout25percent,64.35380507904975
+ensemble5percent,64.15241669183982
 dropconnect5percent,63.64395158320875
 flipout10percent,61.45722667380213
 dropconnect1percent,61.41793862828018
+ensemble1percent,61.4115841925535
 flipout5percent,53.21636405730492
 flipout1percent,7.381553661376327

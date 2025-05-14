@@ -11,17 +11,15 @@ import random
 import re
 from model import AgeEstimationModel
 
-# --- Seeding ---
 SEED = 36
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
 random.seed(SEED)
 
-# Optional: Force eager execution for better debugging
 tf.config.run_functions_eagerly(True)
 print("Eager execution:", tf.executing_eagerly())
 
-# --- Constants & Paths ---
+
 MODELS_DIR = "trained_models_by_fraction"
 SAVE_RESULTS_DIR = "mc_dropout_results"
 TEST_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
@@ -31,7 +29,6 @@ MC_SAMPLES = 20
 
 os.makedirs(SAVE_RESULTS_DIR, exist_ok=True)
 
-# --- Load Test Data ---
 def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
     df = pd.read_csv(test_csv_path)
     df["face_file_name"] = df["file_name"].apply(lambda x: f"{x}_face.jpg")
@@ -58,7 +55,6 @@ def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
     dataset = dataset.batch(batch_size, drop_remainder=False)
     return dataset
 
-# --- MC Dropout Inference for Ensemble ---
 def mc_inference(models, dataset, n_samples=20):
     all_means = []
     all_vars = []
@@ -105,7 +101,7 @@ def mc_inference(models, dataset, n_samples=20):
                 y_trues = np.concatenate(sample_trues)
 
             mc_pbar.update(1)
-            mc_pbar.refresh()  # Force update
+            mc_pbar.refresh()
 
     all_means = np.stack(all_means, axis=0)
     all_vars = np.stack(all_vars, axis=0)
@@ -119,7 +115,6 @@ def mc_inference(models, dataset, n_samples=20):
 
     return pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_trues
 
-# --- Plotting ---
 def plot_predictions(y_true, mean, std, save_path_prefix):
     os.makedirs(os.path.dirname(save_path_prefix), exist_ok=True)
 
@@ -155,7 +150,6 @@ def plot_predictions(y_true, mean, std, save_path_prefix):
     plt.savefig(save_path_prefix + "_uncertainty_histogram.png")
     plt.close()
 
-# --- Inference ---
 def run_ensemble_inference():
     print("Loading test dataset...")
     test_dataset = load_test_data(TEST_DIR, TEST_CSV, batch_size=BATCH_SIZE)
