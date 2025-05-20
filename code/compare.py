@@ -8,13 +8,28 @@ OUTPUT_DIR = "compare"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def extract_model_info(filename):
+    # Match standard files: flipout25percent_mc_predictions.csv
     match = re.match(r'(flipout|dropconnect|ensemble)(\d+)percent_mc_predictions\.csv', filename)
     if match:
         model_type, percentage = match.groups()
         return model_type, int(percentage)
+
+    # Match flipout with lastlayer: flipout25percentlastlayer_mc_predictions.csv
+    match = re.match(r'(flipout)(\d+)percentlastlayer_mc_predictions\.csv', filename)
+    if match:
+        model_type, percentage = match.groups()
+        return model_type + "_lastlayer", int(percentage)
+
     return None, None
 
-data_by_model = {'flipout': [], 'dropconnect': [], 'ensemble': []}
+
+# Add the new model type to the data dictionary
+data_by_model = {
+    'flipout': [],
+    'flipout_lastlayer': [],
+    'dropconnect': [],
+    'ensemble': []
+}
 
 for file in os.listdir(INPUT_DIR):
     if file.endswith("_mc_predictions.csv"):
@@ -68,11 +83,11 @@ def plot_uncertainty_vs_true_age(input_dir=INPUT_DIR, output_dir=OUTPUT_DIR, bin
         plt.close()
         print(f"Saved: {save_path}")
 
-
 fixed_ticks = [1, 5, 10, 25, 50, 75, 100]
 
 plot_uncertainty_vs_true_age()
 
+# Plot uncertainty vs percentage for all models
 for model_type, data in data_by_model.items():
     if not data:
         print(f"No data found for model type: {model_type}")
@@ -84,7 +99,8 @@ for model_type, data in data_by_model.items():
     plt.plot(df["percentage"], df["aleatoric"], marker='o', linestyle='-', label="Aleatoric")
     plt.plot(df["percentage"], df["epistemic"], marker='s', linestyle='--', label="Epistemic")
 
-    plt.title(f"{model_type.capitalize()} - Uncertainty vs Data Percentage")
+    title_name = model_type.replace("_", " ").capitalize()
+    plt.title(f"{title_name} - Uncertainty vs Data Percentage")
     plt.xlabel("Training Data Percentage (%)")
     plt.ylabel("Average Uncertainty")
     plt.xticks(fixed_ticks)
@@ -96,4 +112,3 @@ for model_type, data in data_by_model.items():
     plt.savefig(save_path)
     plt.close()
     print(f"Saved plot: {save_path}")
-

@@ -203,6 +203,45 @@ def run_ensemble_inference():
         plot_prefix = os.path.join(SAVE_RESULTS_DIR, ensemble_name)
         plot_predictions(y_true, pred_mean, pred_model_std, plot_prefix)
 
+def run_model_inference():
+    print("Loading test dataset...")
+    test_dataset = load_test_data(TEST_DIR, TEST_CSV, batch_size=BATCH_SIZE)
+
+    model_files = sorted([f for f in os.listdir(MODELS_DIR) if f.endswith("lastlayer.keras")])
+
+    for model_file in model_files:
+
+        print(f"\nProcessing model: {model_file}")
+        model_path = os.path.join(MODELS_DIR, model_file)
+        model = tf.keras.models.load_model(model_path, compile=False)
+
+        # Wrap in list for mc_inference compatibility
+        models = [model]
+
+        # Perform MC inference
+        pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_true = mc_inference(
+            models, test_dataset, n_samples=MC_SAMPLES
+        )
+
+        # Save results
+        model_name = model_file.replace(".keras", "")
+        save_path = os.path.join(SAVE_RESULTS_DIR, f"{model_name}_mc_predictions.csv")
+        df = pd.DataFrame({
+            "y_true": y_true,
+            "mean_prediction": pred_mean,
+            "aleatoric_uncertainty": aleatoric,
+            "epistemic_uncertainty": epistemic,
+            "predictive_uncertainty": predictive,
+            "model_predicted_std": pred_model_std
+        })
+        df.to_csv(save_path, index=False)
+        print(f"Saved results: {save_path}")
+
+        # Save plots
+        plot_prefix = os.path.join(SAVE_RESULTS_DIR, model_name)
+        plot_predictions(y_true, pred_mean, pred_model_std, plot_prefix)
+
+
 def get_marker_and_color(model_name):
 
     if "dropconnect" in model_name.lower():
@@ -383,7 +422,7 @@ def plot_model_rankings(ranked_df, results_dir=SAVE_RESULTS_DIR, plot_filename="
     plt.close()
     print(f"Model ranking plot saved to {save_path}")
 
-run_ensemble_inference()
+run_model_inference()
 generate_inference_report()
 plot_calibration_curves()
 ranked_models = rank_models()

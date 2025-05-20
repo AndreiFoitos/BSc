@@ -31,7 +31,7 @@ else:
 BATCH_SIZE = 32
 DROPOUT_RATE = 0.3
 
-DATA_FRACTIONS = [0.25, 0.5, 0.75, 1.00]
+DATA_FRACTIONS = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.00]
 NUM_ENSEMBLE_MODELS = 3
 
 OUTPUT_DIR = "trained_models_by_fraction"
@@ -186,7 +186,7 @@ def train_and_save(model_type, fraction, model_index=None):
 
     plot_training_history_combined([history_phase1, history_phase2, history_fine], tag)
 
-    file_name = f"{tag}.keras"
+    file_name = f"{tag}lastlayer.keras"
     save_path = os.path.join(OUTPUT_DIR, file_name)
     model.save(save_path)
     print(f"Saved model: {file_name}")
@@ -194,16 +194,12 @@ def train_and_save(model_type, fraction, model_index=None):
 
 
 for fraction in DATA_FRACTIONS:
-    train_and_save("dropconnect", fraction)
     train_and_save("flipout", fraction)
 
 
-for fraction in DATA_FRACTIONS:
+"""for fraction in DATA_FRACTIONS:
     for i in range(NUM_ENSEMBLE_MODELS):
-        # Skip training for ensemble25percent_model1 (already trained)
-        if fraction == 0.25 and i == 0:
-            continue
-        train_and_save("ensemble", fraction, model_index=i)
+        train_and_save("ensemble", fraction, model_index=i)"""
 
 
 def generate_training_report(log_dir=LOGS_DIR, output_path="training_summary.csv"):

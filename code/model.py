@@ -49,18 +49,19 @@ class AgeEstimationModel(tf.keras.Model):
         self.batch_norm2 = BatchNormalization()
         self.relu2 = LeakyReLU(alpha=0.1)
         
-        if self.use_flipout:
-            self.age_avg_head = tfpl.DenseFlipout(128, activation='relu')
-            self.age_std_head = tfpl.DenseFlipout(128, activation='relu')
-        else:
-            self.age_avg_head = Dense(128, activation='relu')
-            self.age_std_head = Dense(128, activation='relu')
 
+        self.age_avg_head = Dense(128, activation='relu')
+        self.age_std_head = Dense(128, activation='relu')
 
         self.dropout = Dropout(dropout_rate)
 
-        self.age_avg_output = Dense(1, activation='relu', name='apparent_age_avg')
-        self.age_std_output = Dense(1, activation='softplus', name='apparent_age_std')
+        if self.use_flipout:
+            self.age_avg_output = tfpl.DenseFlipout(1, activation='relu', name='apparent_age_avg')
+            self.age_std_output = tfpl.DenseFlipout(1, activation='softplus', name='apparent_age_std')
+        else:
+            self.age_avg_output = Dense(1, activation='relu', name='apparent_age_avg')
+            self.age_std_output = Dense(1, activation='softplus', name='apparent_age_std')
+
 
 
     def get_dense_layer(self, units):
