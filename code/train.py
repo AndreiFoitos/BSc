@@ -1,32 +1,18 @@
 import os
 import json
-import random
 import matplotlib.pyplot as plt
-import numpy as np
 import seaborn as sns
-import pandas as pd
-import tensorflow as tf
 
 from model import AgeEstimationModel
 from data_loader import AgePredictionDataLoader
 
-SEED = 36
-random.seed(SEED)
-np.random.seed(SEED)
-tf.random.set_seed(SEED)
 
 
-use_laptop=True
-if use_laptop:
-    TRAIN_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/train"
-    VALID_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/valid"
-    TRAIN_CSV = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_train.csv"
-    VALID_CSV = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_valid.csv"
-else:
-    TRAIN_DIR = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/train"
-    VALID_DIR = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/valid"
-    TRAIN_CSV = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_train.csv"
-    VALID_CSV = "C:/Users/Andrei/OneDrive/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_valid.csv"
+
+TRAIN_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/train"
+VALID_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/valid"
+TRAIN_CSV = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_train.csv"
+VALID_CSV = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_valid.csv"
 
 BATCH_SIZE = 32
 DROPOUT_RATE = 0.3
@@ -195,42 +181,9 @@ def train_and_save(model_type, fraction, model_index=None):
 
 for fraction in DATA_FRACTIONS:
     train_and_save("flipout", fraction)
+    train_and_save("dropconnect", fraction)
 
 
 """for fraction in DATA_FRACTIONS:
     for i in range(NUM_ENSEMBLE_MODELS):
         train_and_save("ensemble", fraction, model_index=i)"""
-
-
-def generate_training_report(log_dir=LOGS_DIR, output_path="training_summary.csv"):
-    rows = []
-    for file in os.listdir(log_dir):
-        if file.endswith("_history.json"):
-            full_path = os.path.join(log_dir, file)
-            with open(full_path, "r") as f:
-                history = json.load(f)
-
-            tag_parts = file.replace("history.json", "").split("")
-            phase = tag_parts[-1]
-            model_type = tag_parts[0]
-            data_fraction = tag_parts[1]
-            model_index = tag_parts[3] if "ensemble" in file else None
-
-            for metric, values in history.items():
-                if len(values) > 0:
-                    rows.append({
-                        "model_type": model_type,
-                        "data_fraction": data_fraction,
-                        "phase": phase,
-                        "metric": metric,
-                        "value": values[-1],
-                        "model_index": model_index
-                    })
-
-    df = pd.DataFrame(rows)
-    df.sort_values(by=["model_type", "data_fraction", "phase", "metric"], inplace=True)
-    df.to_csv(output_path, index=False)
-    print(f"Report saved to {output_path}")
-
-
-generate_training_report()

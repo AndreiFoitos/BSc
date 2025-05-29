@@ -7,24 +7,15 @@ import pandas as pd
 from scipy.stats import pearsonr
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from tqdm import tqdm
-import random
 import re
 
 from model import AgeEstimationModel
 
-# --- Seeding for Reproducibility ---
-SEED = 36
-np.random.seed(SEED)
-tf.random.set_seed(SEED)
-random.seed(SEED)
-
-# --- Paths (Adjust if needed) ---
 MODELS_DIR = "trained_models_by_fraction"
 SAVE_RESULTS_DIR = "mc_dropout_results"
 
 os.makedirs(SAVE_RESULTS_DIR, exist_ok=True)
 
-# --- Constants ---
 BATCH_SIZE = 32
 MC_SAMPLES = 20
 
@@ -32,7 +23,6 @@ MC_SAMPLES = 20
 TEST_DIR = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/test"
 TEST_CSV = "C:/Users/Andrei/Documents/GitHub/BSc/appa-real-release/appa-real-release/gt_avg_test.csv"
 
-# --- Load Test Data ---
 def load_test_data(test_dir, test_csv_path, img_size=(224, 224), batch_size=32):
     df = pd.read_csv(test_csv_path)
     df["face_file_name"] = df["file_name"].apply(lambda x: f"{x}_face.jpg")
@@ -206,6 +196,7 @@ def run_ensemble_inference():
 def run_model_inference():
     print("Loading test dataset...")
     test_dataset = load_test_data(TEST_DIR, TEST_CSV, batch_size=BATCH_SIZE)
+    print(test_dataset)
 
     model_files = sorted([f for f in os.listdir(MODELS_DIR) if f.endswith("lastlayer.keras")])
 
@@ -215,15 +206,12 @@ def run_model_inference():
         model_path = os.path.join(MODELS_DIR, model_file)
         model = tf.keras.models.load_model(model_path, compile=False)
 
-        # Wrap in list for mc_inference compatibility
         models = [model]
 
-        # Perform MC inference
         pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_true = mc_inference(
             models, test_dataset, n_samples=MC_SAMPLES
         )
 
-        # Save results
         model_name = model_file.replace(".keras", "")
         save_path = os.path.join(SAVE_RESULTS_DIR, f"{model_name}_mc_predictions.csv")
         df = pd.DataFrame({
@@ -237,7 +225,6 @@ def run_model_inference():
         df.to_csv(save_path, index=False)
         print(f"Saved results: {save_path}")
 
-        # Save plots
         plot_prefix = os.path.join(SAVE_RESULTS_DIR, model_name)
         plot_predictions(y_true, pred_mean, pred_model_std, plot_prefix)
 

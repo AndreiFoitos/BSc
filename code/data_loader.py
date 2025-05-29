@@ -125,6 +125,6 @@ class AgePredictionDataLoader:
             dataset = dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
 
         return dataset
-    
+
     def get_sample_count(self):
         return len(self.labels_df)
