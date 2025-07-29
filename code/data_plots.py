@@ -5,9 +5,8 @@ import matplotlib.pyplot as plt
 from model import AgeEstimationModel
 from data_loader import AgePredictionDataLoader
 
-BASE_DIR = "appa-real-release/appa-real-release"
 
-TRAIN_CSV = os.path.join(BASE_DIR, "gt_avg_train.csv")
+TRAIN_CSV = r"C:\Users\Andrei\Documents\GitHub\BSc\appa-real-release\appa-real-release\gt_avg_train.csv"
 
 
 
