@@ -96,16 +96,22 @@ def load_utkface_dataset(data_dir, img_size=(224, 224), batch_size=32, limit=Non
     paths = df["path"].tolist()
     ages = df["age"].astype(np.float32).values
 
-    def _load(path):
-        img = tf.keras.utils.load_img(path, target_size=img_size)
-        arr = tf.keras.utils.img_to_array(img) / 255.0
-        return arr.astype(np.float32)
+    # Streaming pipeline: read+decode+resize each image on demand. The previous
+    # version materialised the full ~14 GB float32 image tensor up-front and
+    # OOM'd on the 32 GB SLURM cap.
+    H, W = img_size
+    def _load_image_tf(path, age):
+        raw = tf.io.read_file(path)
+        img = tf.io.decode_jpeg(raw, channels=3)
+        img = tf.image.resize(img, [H, W], method="bilinear")
+        img = tf.cast(img, tf.float32) / 255.0
+        img.set_shape([H, W, 3])
+        return img, {"real_age": age}
 
-    images = np.stack([_load(p) for p in paths], axis=0)
-    labels = {"real_age": ages}
-
-    dataset = tf.data.Dataset.from_tensor_slices((images, labels))
+    dataset = tf.data.Dataset.from_tensor_slices((paths, ages))
+    dataset = dataset.map(_load_image_tf, num_parallel_calls=tf.data.AUTOTUNE)
     dataset = dataset.batch(batch_size, drop_remainder=False)
+    dataset = dataset.prefetch(tf.data.AUTOTUNE)
     return dataset, df
 
 

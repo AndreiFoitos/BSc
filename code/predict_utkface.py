@@ -40,46 +40,62 @@ def mc_inference(models, dataset, n_samples, label_key="real_age"):
     `models` is a list — for DropConnect/Flipout it's [single_model] and the
     stochasticity comes from training=True; for Ensembles it's the 3 ensemble
     members and we additionally apply training=True on each (cheap insurance,
-    matches what predict.py does for ensembles)."""
-    all_means, all_vars, all_model_stds = [], [], []
-    y_trues_collected = False
-    y_trues = None
+    matches what predict.py does for ensembles).
 
-    for _ in tqdm(range(n_samples), desc="MC passes"):
-        means_this_pass, vars_this_pass, stds_this_pass = [], [], []
-        labels_this_pass = []
+    Memory-conscious layout: we iterate the dataset ONCE and run all n_samples
+    MC passes per batch. Each image is therefore read from disk a single time
+    (the previous version re-loaded every image n_samples times and held the
+    full dataset in RAM, which OOM'd on 32 GB nodes for 23k UTKFace images).
+    Per-image statistics are reduced on the fly so peak memory is bounded by
+    O(n_examples + batch_size * n_samples).
+    """
+    pred_mean_chunks = []
+    aleatoric_chunks = []
+    epistemic_chunks = []
+    pred_std_chunks = []
+    y_true_chunks = []
 
-        for images, labels in dataset:
-            batch_means, batch_vars, batch_stds = [], [], []
+    # tqdm without total — it counts as we iterate. We deliberately avoid a
+    # dry pass to compute n_batches because that would trigger 23k JPEG
+    # decodes for no benefit.
+    pbar = tqdm(desc="Batches", unit="batch")
+    for images, labels in dataset:
+        # For each batch, collect n_samples * len(models) predictions.
+        batch_means_per_pass = []  # (n_samples, batch_size)
+        batch_vars_per_pass = []
+        batch_stds_per_pass = []
+
+        for _ in range(n_samples):
+            model_means, model_vars, model_stds = [], [], []
             for model in models:
                 preds = model(images, training=True)
                 mean = preds["apparent_age_avg"].numpy().flatten()
                 std = preds["apparent_age_std"].numpy().flatten()
-                batch_means.append(mean)
-                batch_vars.append(np.square(std))
-                batch_stds.append(std)
+                model_means.append(mean)
+                model_vars.append(np.square(std))
+                model_stds.append(std)
+            batch_means_per_pass.append(np.mean(model_means, axis=0))
+            batch_vars_per_pass.append(np.mean(model_vars, axis=0))
+            batch_stds_per_pass.append(np.mean(model_stds, axis=0))
 
-            means_this_pass.append(np.mean(batch_means, axis=0))
-            vars_this_pass.append(np.mean(batch_vars, axis=0))
-            stds_this_pass.append(np.mean(batch_stds, axis=0))
-            labels_this_pass.append(labels[label_key].numpy().flatten())
+        bmp = np.stack(batch_means_per_pass, axis=0)  # (n_samples, batch_size)
+        bvp = np.stack(batch_vars_per_pass, axis=0)
+        bsp = np.stack(batch_stds_per_pass, axis=0)
 
-        all_means.append(np.concatenate(means_this_pass))
-        all_vars.append(np.concatenate(vars_this_pass))
-        all_model_stds.append(np.concatenate(stds_this_pass))
-        if not y_trues_collected:
-            y_trues = np.concatenate(labels_this_pass)
-            y_trues_collected = True
+        pred_mean_chunks.append(bmp.mean(axis=0))   # (batch_size,)
+        aleatoric_chunks.append(bvp.mean(axis=0))
+        epistemic_chunks.append(bmp.var(axis=0))
+        pred_std_chunks.append(bsp.mean(axis=0))
+        y_true_chunks.append(labels[label_key].numpy().flatten())
+        pbar.update(1)
+    pbar.close()
 
-    all_means = np.stack(all_means, axis=0)  # (n_samples, n_examples)
-    all_vars = np.stack(all_vars, axis=0)
-    all_model_stds = np.stack(all_model_stds, axis=0)
-
-    pred_mean = all_means.mean(axis=0)
-    aleatoric = all_vars.mean(axis=0)
-    epistemic = all_means.var(axis=0)
+    pred_mean = np.concatenate(pred_mean_chunks)
+    aleatoric = np.concatenate(aleatoric_chunks)
+    epistemic = np.concatenate(epistemic_chunks)
+    pred_model_std = np.concatenate(pred_std_chunks)
     predictive = aleatoric + epistemic
-    pred_model_std = all_model_stds.mean(axis=0)
+    y_trues = np.concatenate(y_true_chunks)
 
     return pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_trues
 

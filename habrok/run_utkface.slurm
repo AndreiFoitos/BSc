@@ -6,7 +6,7 @@
 #SBATCH --partition=gpu
 #SBATCH --gpus-per-node=a100:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH --array=0-8
 
 # 9 array tasks = 3 methods x 3 fractions (25, 50, 100).
