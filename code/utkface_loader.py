@@ -33,8 +33,12 @@ def parse_filename(fname):
 
 def index_directory(data_dir):
     """Scan data_dir for UTKFace jpgs; return a DataFrame with file_name, path, age, gender, race."""
+    if not os.path.isdir(data_dir):
+        raise FileNotFoundError(f"UTKFace directory not found: {data_dir}")
     rows = []
+    total_files = 0
     for fname in os.listdir(data_dir):
+        total_files += 1
         parsed = parse_filename(fname)
         if parsed is None:
             continue
@@ -46,6 +50,13 @@ def index_directory(data_dir):
             "gender": gender,
             "race": race,
         })
+    if not rows:
+        raise RuntimeError(
+            f"No UTKFace-formatted images found in {data_dir}. "
+            f"Saw {total_files} files but none matched the regex "
+            f"[age]_[gender]_[race]_[id].jpg or .jpg.chip.jpg. "
+            f"Did you run habrok/download_utkface.sh successfully?"
+        )
     df = pd.DataFrame(rows).sort_values("file_name").reset_index(drop=True)
     return df
 
