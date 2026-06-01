@@ -2,3 +2,8 @@
 .vscode/
 tf-env/
 utkface/
+venv/
+__pycache__/
+*.pyc
+code/utkface_results/
+habrok/logs/
