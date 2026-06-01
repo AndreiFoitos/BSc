@@ -1,0 +1,181 @@
+"""Run MC inference of trained APPA-REAL models on UTKFace (cross-dataset eval).
+
+Default: evaluate 25%, 50%, 100% data fractions for DropConnect, Flipout,
+Ensemble. Outputs one CSV per (method, fraction) under utkface_results/ with
+columns (y_true, mean_prediction, aleatoric_uncertainty, epistemic_uncertainty,
+predictive_uncertainty, model_predicted_std) — identical schema to predict.py
+so the existing analysis utilities are reusable.
+
+Usage:
+    python predict_utkface.py --utkface_dir ../utkface
+    python predict_utkface.py --utkface_dir ../utkface --fractions 100
+    python predict_utkface.py --utkface_dir ../utkface --smoke
+"""
+
+import argparse
+import os
+import re
+from collections import defaultdict
+
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from tqdm import tqdm
+
+# Importing model.py registers AgeEstimationModel + DropConnectDense via the
+# @register_keras_serializable decorator. Required for load_model to deserialize.
+import model  # noqa: F401
+from utkface_loader import load_utkface_dataset
+
+MODELS_DIR = "trained_models_by_fraction"
+DEFAULT_RESULTS_DIR = "utkface_results"
+DEFAULT_FRACTIONS = (25, 50, 100)
+MC_SAMPLES = 20
+BATCH_SIZE = 32
+
+
+def mc_inference(models, dataset, n_samples, label_key="real_age"):
+    """One-pass-per-sample MC inference adapted from predict.py.
+
+    `models` is a list — for DropConnect/Flipout it's [single_model] and the
+    stochasticity comes from training=True; for Ensembles it's the 3 ensemble
+    members and we additionally apply training=True on each (cheap insurance,
+    matches what predict.py does for ensembles)."""
+    all_means, all_vars, all_model_stds = [], [], []
+    y_trues_collected = False
+    y_trues = None
+
+    for _ in tqdm(range(n_samples), desc="MC passes"):
+        means_this_pass, vars_this_pass, stds_this_pass = [], [], []
+        labels_this_pass = []
+
+        for images, labels in dataset:
+            batch_means, batch_vars, batch_stds = [], [], []
+            for model in models:
+                preds = model(images, training=True)
+                mean = preds["apparent_age_avg"].numpy().flatten()
+                std = preds["apparent_age_std"].numpy().flatten()
+                batch_means.append(mean)
+                batch_vars.append(np.square(std))
+                batch_stds.append(std)
+
+            means_this_pass.append(np.mean(batch_means, axis=0))
+            vars_this_pass.append(np.mean(batch_vars, axis=0))
+            stds_this_pass.append(np.mean(batch_stds, axis=0))
+            labels_this_pass.append(labels[label_key].numpy().flatten())
+
+        all_means.append(np.concatenate(means_this_pass))
+        all_vars.append(np.concatenate(vars_this_pass))
+        all_model_stds.append(np.concatenate(stds_this_pass))
+        if not y_trues_collected:
+            y_trues = np.concatenate(labels_this_pass)
+            y_trues_collected = True
+
+    all_means = np.stack(all_means, axis=0)  # (n_samples, n_examples)
+    all_vars = np.stack(all_vars, axis=0)
+    all_model_stds = np.stack(all_model_stds, axis=0)
+
+    pred_mean = all_means.mean(axis=0)
+    aleatoric = all_vars.mean(axis=0)
+    epistemic = all_means.var(axis=0)
+    predictive = aleatoric + epistemic
+    pred_model_std = all_model_stds.mean(axis=0)
+
+    return pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_trues
+
+
+def collect_model_files(models_dir, fractions, methods):
+    """Group .keras files by method (dropconnect/flipout/ensemble) × fraction."""
+    by_method_frac = defaultdict(list)
+    methods = set(methods)
+    for fname in sorted(os.listdir(models_dir)):
+        if not fname.endswith(".keras"):
+            continue
+        ensemble_match = re.match(r"(ensemble)(\d+)percent_model\d+\.keras", fname)
+        single_match = re.match(r"(dropconnect|flipout)(\d+)percent\.keras", fname)
+        if ensemble_match:
+            method, pct = ensemble_match.group(1), int(ensemble_match.group(2))
+        elif single_match:
+            method, pct = single_match.group(1), int(single_match.group(2))
+        else:
+            continue
+        if pct in fractions and method in methods:
+            by_method_frac[(method, pct)].append(fname)
+    return by_method_frac
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--utkface_dir", required=True, help="Folder with aligned/cropped UTKFace jpgs")
+    ap.add_argument("--results_dir", default=DEFAULT_RESULTS_DIR)
+    ap.add_argument("--models_dir", default=MODELS_DIR)
+    ap.add_argument(
+        "--fractions", type=int, nargs="+", default=list(DEFAULT_FRACTIONS),
+        help="Data fractions to evaluate (must match available checkpoints)",
+    )
+    ap.add_argument(
+        "--methods", type=str, nargs="+", default=["dropconnect", "flipout", "ensemble"],
+        choices=["dropconnect", "flipout", "ensemble"],
+        help="Restrict to a subset of methods (useful for SLURM array jobs)",
+    )
+    ap.add_argument("--mc_samples", type=int, default=MC_SAMPLES)
+    ap.add_argument("--batch_size", type=int, default=BATCH_SIZE)
+    ap.add_argument("--max_images", type=int, default=None,
+                    help="Stratified-by-age cap on UTKFace images (None = all ~23k)")
+    ap.add_argument("--smoke", action="store_true", help="Limit to 64 UTKFace images for a smoke test")
+    args = ap.parse_args()
+
+    os.makedirs(args.results_dir, exist_ok=True)
+
+    print(f"Indexing UTKFace from {args.utkface_dir} ...")
+    if args.smoke:
+        limit = 64
+    elif args.max_images is not None:
+        limit = args.max_images
+    else:
+        limit = None
+    dataset, index_df = load_utkface_dataset(
+        args.utkface_dir, batch_size=args.batch_size, limit=limit
+    )
+    n = len(index_df)
+    print(f"Loaded {n} images")
+    index_df.to_csv(os.path.join(args.results_dir, "utkface_index.csv"), index=False)
+
+    grouped = collect_model_files(args.models_dir, set(args.fractions), args.methods)
+    if not grouped:
+        raise RuntimeError(
+            f"No matching checkpoints under {args.models_dir} for "
+            f"fractions={args.fractions} methods={args.methods}"
+        )
+
+    for (method, pct), files in sorted(grouped.items()):
+        print(f"\n=== {method} @ {pct}% data ({len(files)} model file(s)) ===")
+        models = [
+            tf.keras.models.load_model(os.path.join(args.models_dir, f), compile=False)
+            for f in files
+        ]
+        pred_mean, aleatoric, epistemic, predictive, pred_model_std, y_true = mc_inference(
+            models, dataset, n_samples=args.mc_samples
+        )
+        out = pd.DataFrame({
+            "y_true": y_true,
+            "mean_prediction": pred_mean,
+            "aleatoric_uncertainty": aleatoric,
+            "epistemic_uncertainty": epistemic,
+            "predictive_uncertainty": predictive,
+            "model_predicted_std": pred_model_std,
+        })
+        # Attach metadata from index so the analysis step can do demographic slicing
+        out = pd.concat([index_df.reset_index(drop=True), out.reset_index(drop=True)], axis=1)
+        save_name = f"{method}{pct}percent_utkface_predictions.csv"
+        save_path = os.path.join(args.results_dir, save_name)
+        out.to_csv(save_path, index=False)
+
+        mae = np.mean(np.abs(out["y_true"] - out["mean_prediction"]))
+        rmse = float(np.sqrt(np.mean((out["y_true"] - out["mean_prediction"]) ** 2)))
+        print(f"  saved -> {save_path}")
+        print(f"  MAE = {mae:.3f}  RMSE = {rmse:.3f}  mean sigma = {out['model_predicted_std'].mean():.3f}")
+
+
+if __name__ == "__main__":
+    main()

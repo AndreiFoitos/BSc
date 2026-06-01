@@ -1,0 +1,11 @@
+tensorflow[and-cuda]==2.19.0
+tensorflow-probability==0.25.0
+tf-keras==2.19.0
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+seaborn
+Pillow
+tqdm

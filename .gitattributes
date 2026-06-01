@@ -1,0 +1,16 @@
+* text=auto eol=lf
+
+# Force LF for shell scripts and SLURM files so they work on Linux/Habrok
+*.sh    text eol=lf
+*.slurm text eol=lf
+*.py    text eol=lf
+*.bash  text eol=lf
+
+# Binary files
+*.keras binary
+*.h5    binary
+*.pdf   binary
+*.jpg   binary
+*.png   binary
+*.mat   binary
+*.zip   binary
